@@ -1,0 +1,87 @@
+{
+  "version": "1.0",
+  "saved_at": "2025-11-24T03:14:32.688395",
+  "detectors": {
+    "hatching": {
+      "name": "hatching",
+      "description": "Detects when C. elegans embryo hatches from eggshell",
+      "detection_prompt": "Analyze this C. elegans embryo image and determine if the embryo has HATCHED.\n\nKey characteristics of hatching:\n- Visible breach or rupture in the eggshell (vitelline membrane)\n- Embryo emerging or partially emerged from shell\n- Clear separation between larva and eggshell\n- Change in overall morphology from constrained to free-moving\n\nFocus on the CURRENT/LATEST image (the final one shown).\n\nRespond in this exact format:\nDETECTED: [YES/NO]\nCONFIDENCE: [HIGH/MEDIUM/LOW]\nREASONING: [Brief explanation of what you observe]",
+      "enabled": true,
+      "conditions": {
+        "min_timepoint": 10,
+        "max_timepoint": null,
+        "embryo_ids": null,
+        "run_if_detected": true,
+        "min_interval_timepoints": 1
+      },
+      "actions": {
+        "mode": "recommend",
+        "parameter_changes": null,
+        "custom_message": null,
+        "webhook_url": null
+      },
+      "confidence_threshold": "HIGH",
+      "use_temporal_context": true,
+      "temporal_context_size": 10,
+      "created_at": "2025-11-24T03:14:32.607191",
+      "modified_at": "2025-11-24T03:14:32.607197",
+      "detection_count": 0,
+      "run_count": 0
+    },
+    "comma": {
+      "name": "comma",
+      "description": "Detects comma stage (major morphogenesis)",
+      "detection_prompt": "Analyze this C. elegans embryo and determine if it has reached the COMMA STAGE.\n\nKey characteristics of comma stage (~400 minutes, ~6.5 hours):\n- Distinct comma or bean shape (ventral curvature)\n- Clear anterior-posterior elongation\n- Visible head/tail differentiation\n- Movement patterns visible\n- Still within eggshell\n\nFocus on the CURRENT/LATEST image.\n\nRespond in this exact format:\nDETECTED: [YES/NO]\nCONFIDENCE: [HIGH/MEDIUM/LOW]\nREASONING: [Brief explanation]",
+      "enabled": true,
+      "conditions": {
+        "min_timepoint": 5,
+        "max_timepoint": null,
+        "embryo_ids": null,
+        "run_if_detected": true,
+        "min_interval_timepoints": 1
+      },
+      "actions": {
+        "mode": "auto",
+        "parameter_changes": {
+          "interval_seconds": 60,
+          "num_slices": 80
+        },
+        "custom_message": null,
+        "webhook_url": null
+      },
+      "confidence_threshold": "MEDIUM",
+      "use_temporal_context": true,
+      "temporal_context_size": 5,
+      "created_at": "2025-11-24T03:14:32.609769",
+      "modified_at": "2025-11-24T03:14:32.609771",
+      "detection_count": 0,
+      "run_count": 0
+    },
+    "test_detector": {
+      "name": "test_detector",
+      "description": "Test detector for demonstration",
+      "detection_prompt": "Analyze this image and always respond with:\nDETECTED: YES\nCONFIDENCE: MEDIUM\nREASONING: This is a test detection",
+      "enabled": true,
+      "conditions": {
+        "min_timepoint": 0,
+        "max_timepoint": null,
+        "embryo_ids": null,
+        "run_if_detected": true,
+        "min_interval_timepoints": 1
+      },
+      "actions": {
+        "mode": "passive",
+        "parameter_changes": null,
+        "custom_message": null,
+        "webhook_url": null
+      },
+      "confidence_threshold": "LOW",
+      "use_temporal_context": false,
+      "temporal_context_size": 5,
+      "created_at": "2025-11-24T03:14:32.614867",
+      "modified_at": "2025-11-24T03:14:32.673623",
+      "detection_count": 0,
+      "run_count": 0
+    }
+  }
+}

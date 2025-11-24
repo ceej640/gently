@@ -1,0 +1,58 @@
+{
+  "version": "1.0",
+  "saved_at": "2025-11-24T06:39:05.047365",
+  "detectors": {
+    "hatching": {
+      "name": "hatching",
+      "description": "Detects when C. elegans embryo hatches from eggshell",
+      "detection_prompt": "Analyze this C. elegans embryo image and determine if the embryo has HATCHED.\n\nKey characteristics of hatching:\n- Visible breach or rupture in the eggshell (vitelline membrane)\n- Embryo emerging or partially emerged from shell\n- Clear separation between larva and eggshell\n- Change in overall morphology from constrained to free-moving\n\nFocus on the CURRENT/LATEST image (the final one shown).\n\nRespond in this exact format:\nDETECTED: [YES/NO]\nCONFIDENCE: [HIGH/MEDIUM/LOW]\nREASONING: [Brief explanation of what you observe]",
+      "enabled": true,
+      "conditions": {
+        "min_timepoint": 50,
+        "max_timepoint": null,
+        "embryo_ids": null,
+        "run_if_detected": true,
+        "min_interval_timepoints": 1
+      },
+      "actions": {
+        "mode": "recommend",
+        "parameter_changes": null,
+        "custom_message": null,
+        "webhook_url": null
+      },
+      "confidence_threshold": "HIGH",
+      "use_temporal_context": true,
+      "temporal_context_size": 10,
+      "created_at": "2025-11-24T03:47:37.023820",
+      "modified_at": "2025-11-24T03:47:37.023828",
+      "detection_count": 0,
+      "run_count": 0
+    },
+    "sample_present": {
+      "name": "sample_present",
+      "description": "Detects whether an embryo sample is present in the field of view",
+      "detection_prompt": "You are analyzing microscopy images from a C. elegans embryo imaging system. Your task is to determine whether a biological sample (embryo) is present in the CURRENT/LATEST image.\n\nWHAT TO LOOK FOR - C. elegans embryo characteristics:\n- Oval or elliptical shape, typically 50-60 \u03bcm in length\n- Clear eggshell boundary (may appear as a bright outline or refractile edge)\n- Internal cellular structure with visible cells or nuclei\n- Cytoplasmic texture (granular appearance)\n- Development stages may include: early cleavage (1-4 cells), multicellular embryo, comma stage, or late-stage embryo\n- May show cell division, cell movements, or differentiated tissues depending on developmental stage\n\nWHAT INDICATES ABSENCE:\n- Empty field with only background/debris\n- Only medium/buffer visible without defined embryo structure\n- Significant stage drift (embryo moved completely out of frame)\n- Post-hatching scenario: larva has left the field entirely, leaving empty space or only eggshell remnants\n- Lack of the characteristic oval embryo shape and organized cellular content\n\nIMPORTANT INSTRUCTIONS:\n- If multiple images are provided (time series), focus your analysis on the LATEST/MOST RECENT image only\n- Distinguish between empty positions and degraded/dead embryos (dead embryos still count as \"present\")\n- Small debris or particles do NOT count as a sample\n- Partial embryos at the edge of frame still count as \"present\"\n\nProvide your response in this exact format:\n\nDETECTED: [YES/NO]\nCONFIDENCE: [HIGH/MEDIUM/LOW]\nREASONING: [2-3 sentences explaining what you see and why you made this determination]",
+      "enabled": true,
+      "conditions": {
+        "min_timepoint": null,
+        "max_timepoint": null,
+        "embryo_ids": null,
+        "run_if_detected": true,
+        "min_interval_timepoints": 1
+      },
+      "actions": {
+        "mode": "passive",
+        "parameter_changes": null,
+        "custom_message": null,
+        "webhook_url": null
+      },
+      "confidence_threshold": "MEDIUM",
+      "use_temporal_context": true,
+      "temporal_context_size": 5,
+      "created_at": "2025-11-24T06:39:05.047341",
+      "modified_at": "2025-11-24T06:39:05.047345",
+      "detection_count": 0,
+      "run_count": 0
+    }
+  }
+}
