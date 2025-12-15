@@ -350,6 +350,7 @@ class TimelapseOrchestrator:
         microscope_client,
         experiment_state,
         detection_queue=None,
+        perception_manager=None,
         on_volume_callback: Optional[Callable] = None,
     ):
         """
@@ -360,13 +361,16 @@ class TimelapseOrchestrator:
         experiment_state : ExperimentState
             Shared experiment state
         detection_queue : DetectionQueue, optional
-            For running detectors on acquired volumes
+            For running detectors on acquired volumes (legacy)
+        perception_manager : PerceptionManager, optional
+            VLM-based perception system for continuous monitoring
         on_volume_callback : callable, optional
             Called after each volume: on_volume_callback(embryo_id, timepoint, volume)
         """
         self.client = microscope_client
         self.experiment = experiment_state
         self.detection_queue = detection_queue
+        self.perception_manager = perception_manager
         self.on_volume_callback = on_volume_callback
 
         # Event bus for status updates
@@ -594,10 +598,13 @@ class TimelapseOrchestrator:
                     await asyncio.sleep(0.5)
 
                 # === VERIFICATION PHASE ===
-                # After each round, run verification for embryos with pending detections
-                embryos_to_verify = self._get_embryos_pending_verification()
-                if embryos_to_verify and not self._stop_requested:
-                    await self._run_verification_round(embryos_to_verify, target_round)
+                # Skip legacy verification if perception system is active
+                # (perception handles continuous belief tracking and stop conditions)
+                if not self.perception_manager:
+                    # Legacy: Run verification for embryos with pending detections
+                    embryos_to_verify = self._get_embryos_pending_verification()
+                    if embryos_to_verify and not self._stop_requested:
+                        await self._run_verification_round(embryos_to_verify, target_round)
 
         except asyncio.CancelledError:
             logger.info("Timelapse cancelled")
@@ -704,6 +711,15 @@ class TimelapseOrchestrator:
                             data
                         )
 
+                # Run perception system (VLM-based continuous monitoring)
+                if self.perception_manager:
+                    await self._run_perception(
+                        embryo_id=embryo_id,
+                        embryo_state=embryo_state,
+                        result=result,
+                        acquisition_mode=acquisition_mode,
+                    )
+
                 # Check stop condition
                 await self._check_stop_condition(embryo_state)
 
@@ -742,6 +758,116 @@ class TimelapseOrchestrator:
                 message=str(e),
                 exception=e
             )
+
+    async def _run_perception(
+        self,
+        embryo_id: str,
+        embryo_state: EmbryoAcquisitionState,
+        result: Dict,
+        acquisition_mode: str,
+    ) -> None:
+        """
+        Run perception system on acquired volume.
+
+        This replaces the old detection queue + verification round pattern
+        with continuous VLM-based belief tracking.
+
+        Parameters
+        ----------
+        embryo_id : str
+            Embryo that was imaged
+        embryo_state : EmbryoAcquisitionState
+            Current acquisition state
+        result : dict
+            Acquisition result with volume/image data
+        acquisition_mode : str
+            'volume' or 'snap'
+        """
+        if not self.perception_manager:
+            return
+
+        try:
+            import base64
+            import io
+            import numpy as np
+            from PIL import Image
+
+            # Get the image data
+            data = result.get('volume') if acquisition_mode == 'volume' else result.get('image')
+            if data is None:
+                logger.debug(f"No image data for perception on {embryo_id}")
+                return
+
+            if not isinstance(data, np.ndarray):
+                data = np.array(data)
+
+            # For volumes, create a max projection for perception
+            if data.ndim == 3:
+                # Z-stack: create max intensity projection
+                projection = np.max(data, axis=0)
+            else:
+                projection = data
+
+            # Normalize to 8-bit for encoding
+            if projection.dtype != np.uint8:
+                projection = ((projection - projection.min()) /
+                              (projection.max() - projection.min() + 1e-8) * 255).astype(np.uint8)
+
+            # Convert to base64
+            pil_image = Image.fromarray(projection)
+            buffer = io.BytesIO()
+            pil_image.save(buffer, format="JPEG", quality=85)
+            image_b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+
+            # Get recent images for temporal context (from copilot's image_manager if available)
+            recent_images = []
+            if hasattr(self, '_copilot') and self._copilot and hasattr(self._copilot, 'image_manager'):
+                try:
+                    # Get last 3 timepoints for temporal context
+                    for tp in range(max(1, embryo_state.timepoints_acquired - 3), embryo_state.timepoints_acquired):
+                        img_b64 = await self._copilot.image_manager.get_image_b64(embryo_id, tp)
+                        if img_b64:
+                            recent_images.append((tp, img_b64))
+                except Exception as e:
+                    logger.debug(f"Could not get recent images for perception: {e}")
+
+            # Get recent hardware errors
+            hardware_errors = []
+            error_summary = self.global_error_log.compile_for_verification(self._current_round)
+            if "No hardware errors" not in error_summary:
+                hardware_errors = [error_summary]
+
+            # Run perception
+            perception_output = await self.perception_manager.process_volume(
+                embryo_id=embryo_id,
+                timepoint=embryo_state.timepoints_acquired,
+                current_image_b64=image_b64,
+                recent_images=recent_images,
+                hardware_errors=hardware_errors,
+            )
+
+            # Get the perception session for belief updates
+            session = self.perception_manager.get_session(embryo_id)
+            if session:
+                beliefs = session.beliefs
+
+                # Update EmbryoState with perception results
+                embryo = self.experiment.embryos.get(embryo_id)
+                if embryo:
+                    embryo.update_from_perception(
+                        beliefs_dict=beliefs.to_dict(),
+                        evidence_count=session.rounds_processed,
+                    )
+
+                logger.debug(
+                    f"[{embryo_id}] Perception: stage={beliefs.most_likely_stage} "
+                    f"({beliefs.stage_confidence:.0%}), "
+                    f"hatching={beliefs.hatching_complete}, "
+                    f"dead={beliefs.possibly_dead}"
+                )
+
+        except Exception as e:
+            logger.warning(f"Perception failed for {embryo_id}: {e}")
 
     async def _check_stop_condition(self, embryo_state: EmbryoAcquisitionState):
         """
@@ -792,41 +918,70 @@ class TimelapseOrchestrator:
                 return f"reached {cond.value}h duration"
 
         elif cond.condition_type == StopConditionType.HATCHING:
-            # NOTE: Primary stopping mechanism is the verification round system.
-            # When detector fires with AUTO mode + stop_timelapse:
-            #   1. Embryo is marked pending_verification
-            #   2. Verification round acquires fresh volume and runs multi-strategy verification
-            #   3. After 5 consecutive verified detections, embryo.is_complete = True
-            #
-            # This stop condition serves as a fallback for:
-            #   - Legacy hatching_status (set manually)
-            #   - Detections marked verified through other paths
-            #
-            # The 5-consecutive-verification system replaces confirmation timepoints.
+            # Primary mechanism: Perception system's continuous belief tracking
+            # The perception system maintains hatching state with confidence
             embryo = self.experiment.embryos.get(embryo_state.embryo_id)
             if embryo:
-                # Check hatching_status (legacy manual marking)
+                # Check perception beliefs first (preferred method)
+                if self.perception_manager:
+                    session = self.perception_manager.get_session(embryo_state.embryo_id)
+                    if session and session.beliefs.hatching_complete:
+                        confidence = session.beliefs.stage_confidence
+                        return f"hatching detected via perception ({confidence:.0%})"
+
+                # Fallback: Check hatching_status (legacy manual marking)
                 hatched_via_status = embryo.hatching_status.get('hatched', False)
-                # Check detection_results (require verified to prevent false positives)
+
+                # Fallback: Check detection_results (require verified)
                 hatched_via_detector = embryo.was_detected('hatching', require_verified=True)
 
-                if hatched_via_status or hatched_via_detector:
-                    # Stop immediately - verification already happened via verification round
-                    # or this is a legacy manual marking
+                # Fallback: Check perception_beliefs stored on embryo (for resumed sessions)
+                hatched_via_perception_state = False
+                if embryo.perception_beliefs:
+                    hatched_via_perception_state = embryo.perception_beliefs.get('hatching_complete', False)
+
+                if hatched_via_status or hatched_via_detector or hatched_via_perception_state:
                     return "hatching detected (verified)"
 
         elif cond.condition_type == StopConditionType.COMMA_STAGE:
-            # Check if comma stage was detected
+            # Check if comma stage was detected via perception or legacy detectors
             embryo = self.experiment.embryos.get(embryo_state.embryo_id)
             if embryo:
-                # Use the was_detected helper from EmbryoState
-                if embryo.was_detected('comma') or embryo.was_detected('comma_stage'):
+                comma_detected = False
+                comma_confidence = 0.0
+
+                # Check perception beliefs first (preferred method)
+                if self.perception_manager:
+                    session = self.perception_manager.get_session(embryo_state.embryo_id)
+                    if session:
+                        beliefs = session.beliefs
+                        comma_prob = beliefs.stage_distribution.get('comma', 0.0)
+                        # Consider comma detected if it's the most likely stage with >60% confidence
+                        if beliefs.most_likely_stage == 'comma' and beliefs.stage_confidence > 0.6:
+                            comma_detected = True
+                            comma_confidence = beliefs.stage_confidence
+
+                # Fallback: Check perception_beliefs stored on embryo
+                if not comma_detected and embryo.perception_beliefs:
+                    stage_dist = embryo.perception_beliefs.get('stage_distribution', {})
+                    most_likely = embryo.perception_beliefs.get('most_likely_stage', '')
+                    confidence = embryo.perception_beliefs.get('stage_confidence', 0.0)
+                    if most_likely == 'comma' and confidence > 0.6:
+                        comma_detected = True
+                        comma_confidence = confidence
+
+                # Fallback: Legacy detector results
+                if not comma_detected:
+                    comma_detected = embryo.was_detected('comma') or embryo.was_detected('comma_stage')
+
+                if comma_detected:
                     # First time detecting comma - record the timepoint
                     if embryo_state.detection_triggered_at is None:
                         embryo_state.detection_triggered_at = embryo_state.timepoints_acquired
                         embryo_state.detection_type = "comma_stage"
+                        source = f"perception ({comma_confidence:.0%})" if comma_confidence > 0 else "detector"
                         logger.info(
-                            f"Comma stage detected for {embryo_state.embryo_id} at t{embryo_state.timepoints_acquired}, "
+                            f"Comma stage detected for {embryo_state.embryo_id} at t{embryo_state.timepoints_acquired} via {source}, "
                             f"will acquire {cond.confirm_timepoints} more confirmation timepoints"
                         )
 

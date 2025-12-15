@@ -1,6 +1,15 @@
 """
 Detection Verifier - Challenger Agent for Detection Verification
 
+.. deprecated::
+    This module is superseded by the perception system in gently.agent.perception.
+    The perception system provides continuous VLM-based belief tracking that replaces
+    the discontinuous verification rounds. This module is kept for legacy compatibility
+    but will be removed in a future version.
+
+    Use the PerceptionManager instead:
+        from gently.agent.perception import PerceptionManager
+
 Provides a verification layer before AUTO mode detection actions execute.
 Uses multiple strategies to validate detections and prevent false positives.
 

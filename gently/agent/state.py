@@ -298,6 +298,12 @@ class EmbryoState:
     # result_type -> list of results by timepoint
     # e.g., {"nuclei_count": [{"timepoint": 5, "num_nuclei": 66, ...}]}
 
+    # Perception system state (VLM-based continuous monitoring)
+    perception_beliefs: Optional[Dict] = None  # Serialized BeliefState from perception system
+    perception_evidence_count: int = 0  # Number of evidence points accumulated
+    perception_anomaly_flags: Dict[str, bool] = field(default_factory=dict)
+    # {"dead": False, "technical_issue": False, "blank_frames": False}
+
     # Quick-access fields for latest CV results (for /embryos display)
     latest_nuclei_count: Optional[int] = None
     latest_developmental_stage: Optional[str] = None
@@ -742,6 +748,89 @@ class EmbryoState:
             },
         }
 
+    def update_from_perception(self, beliefs_dict: Dict, evidence_count: int = 0):
+        """
+        Update embryo state from perception system beliefs.
+
+        Called after each perception round to sync perception state
+        into the main embryo state for persistence and display.
+
+        Parameters
+        ----------
+        beliefs_dict : dict
+            Serialized BeliefState from perception system
+        evidence_count : int
+            Number of evidence points accumulated in session
+        """
+        self.perception_beliefs = beliefs_dict
+        self.perception_evidence_count = evidence_count
+
+        # Update anomaly flags from beliefs
+        self.perception_anomaly_flags = {
+            "dead": beliefs_dict.get("possibly_dead", False),
+            "technical_issue": beliefs_dict.get("technical_issue_suspected", False),
+        }
+
+        # Update hatching status from perception (if hatching detected)
+        if beliefs_dict.get("hatching_complete", False):
+            self.hatching_status = {
+                "hatched": True,
+                "confidence": "HIGH",  # Perception uses continuous confidence
+                "timepoint": beliefs_dict.get("hatching_timepoint"),
+                "source": "perception",
+            }
+
+        # Update developmental stage quick-access field
+        stage = beliefs_dict.get("most_likely_stage")
+        if stage:
+            self.latest_developmental_stage = stage
+
+    def get_perception_summary(self) -> Optional[str]:
+        """
+        Get human-readable summary of perception state.
+
+        Returns
+        -------
+        str or None
+            Summary string, or None if no perception data
+        """
+        if not self.perception_beliefs:
+            return None
+
+        beliefs = self.perception_beliefs
+        lines = []
+
+        # Stage
+        stage = beliefs.get("most_likely_stage", "unknown")
+        confidence = beliefs.get("stage_confidence", 0)
+        lines.append(f"Stage: {stage} ({confidence:.0%})")
+
+        # Hatching state
+        if beliefs.get("hatching_complete"):
+            lines.append("HATCHED")
+        elif beliefs.get("hatching_in_progress"):
+            if beliefs.get("worm_exiting"):
+                lines.append("Worm exiting")
+            elif beliefs.get("breach_detected"):
+                lines.append("Breach detected")
+            else:
+                lines.append("Hatching in progress")
+
+        # Anomalies
+        if beliefs.get("possibly_dead"):
+            dead_conf = beliefs.get("dead_confidence", 0)
+            lines.append(f"Possibly dead ({dead_conf:.0%})")
+        if beliefs.get("technical_issue_suspected"):
+            issue_type = beliefs.get("technical_issue_type", "unknown")
+            lines.append(f"Technical issue: {issue_type}")
+
+        # Temporal state
+        hours_since = beliefs.get("hours_since_change", 0)
+        if hours_since > 0.5:
+            lines.append(f"Unchanged for {hours_since:.1f}h")
+
+        return " | ".join(lines) if lines else None
+
     def update_from_analysis(self, analysis_result: Dict):
         """Update state with new analysis"""
         if 'hatching' in analysis_result:
@@ -851,6 +940,10 @@ class EmbryoState:
                 'custom': self.custom_classifications,
             },
             'focus_history': [fp.to_dict() for fp in self.focus_history],
+            # Perception system state
+            'perception_beliefs': self.perception_beliefs,
+            'perception_evidence_count': self.perception_evidence_count,
+            'perception_anomaly_flags': self.perception_anomaly_flags,
         }
 
 

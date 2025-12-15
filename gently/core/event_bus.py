@@ -51,6 +51,12 @@ class EventType(Enum):
     DETECTION_TRIGGERED = auto()  # Emitted only when detected=True (positive detection)
     HATCHING_DETECTED = auto()
 
+    # Perception system events (VLM-based continuous monitoring)
+    PERCEPTION_ROUND_COMPLETED = auto()  # Each perception round on an embryo
+    PERCEPTION_BELIEF_UPDATED = auto()   # Belief state changed significantly
+    DEAD_EMBRYO_SUSPECTED = auto()       # Embryo appears dead (no change over time)
+    BLANK_FRAME_CLASSIFIED = auto()      # Blank frame classified as technical/biological
+
     # Verification events (multi-strategy verification for detections)
     VERIFICATION_STARTED = auto()       # Verification round begins for embryo
     VERIFICATION_STRATEGY = auto()      # Individual strategy result (adversarial, temporal, etc.)

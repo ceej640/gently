@@ -1,0 +1,45 @@
+{
+  "version": "1.0",
+  "description": "Few-shot examples for C. elegans embryo perception system",
+  "stages": {
+    "early": {
+      "description": "Early embryo development - cell division visible, oval shape",
+      "expected_features": ["visible cells", "oval shape", "eggshell intact"]
+    },
+    "comma": {
+      "description": "Comma stage - embryo begins to elongate, comma-like shape",
+      "expected_features": ["elongated shape", "comma curve", "beginning differentiation"]
+    },
+    "pretzel": {
+      "description": "Pretzel stage - embryo folded into pretzel shape",
+      "expected_features": ["folded body", "pretzel loops", "clear differentiation"]
+    },
+    "3fold": {
+      "description": "3-fold stage - embryo tightly folded, movements may be visible",
+      "expected_features": ["tight folding", "visible pharynx", "possible movement"]
+    },
+    "hatching": {
+      "description": "Active hatching - breach in eggshell, worm emerging",
+      "expected_features": ["eggshell breach", "worm partially outside", "active movement"]
+    },
+    "hatched": {
+      "description": "Hatching complete - empty eggshell or worm fully emerged",
+      "expected_features": ["deflated eggshell", "worm outside", "empty field possible"]
+    }
+  },
+  "anomalies": {
+    "dead_embryo": {
+      "description": "Embryo that has stopped developing - no movement, unchanged morphology",
+      "expected_features": ["static morphology", "no visible movement", "degraded appearance possible"]
+    },
+    "blank_technical": {
+      "description": "Blank frame due to technical issue - imaging error, focus problem",
+      "expected_features": ["completely black/white", "no visible structure", "sudden onset"]
+    },
+    "blank_biological": {
+      "description": "Blank frame after hatching - worm has left field of view",
+      "expected_features": ["deflated eggshell visible", "preceded by hatching", "worm absent"]
+    }
+  },
+  "examples": []
+}

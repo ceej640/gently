@@ -34,6 +34,7 @@ from .detection_verifier import DetectionVerifier
 from .interaction_logger import InteractionLogger
 from .timelapse_orchestrator import TimelapseOrchestrator
 from .timeline import TimelineManager
+from .perception import PerceptionManager
 from ..session import SessionManager
 from ..core import EventType, get_event_bus, emit
 
@@ -146,6 +147,9 @@ class MicroscopyCopilot:
         # Timelapse orchestrator (initialized when microscope connected)
         self.timelapse_orchestrator: Optional[TimelapseOrchestrator] = None
 
+        # Perception manager (VLM-based continuous monitoring)
+        self.perception_manager: Optional[PerceptionManager] = None
+
         # Timeline manager for tracking events
         self.timeline_manager: Optional[TimelineManager] = None
 
@@ -179,6 +183,10 @@ class MicroscopyCopilot:
 
         # Initialize interaction logger (for research data collection)
         self._init_interaction_logger()
+
+        # Initialize perception manager (VLM-based continuous monitoring)
+        # Must be before timelapse_orchestrator so it can be passed to it
+        self._init_perception_manager()
 
         # Initialize timelapse orchestrator (if microscope connected)
         self._init_timelapse_orchestrator()
@@ -541,6 +549,7 @@ Write a brief status summary. Examples:
                 microscope_client=self.client,
                 experiment_state=self.experiment,
                 detection_queue=self.detection_queue,
+                perception_manager=self.perception_manager,
                 on_volume_callback=self.on_volume_acquired,
             )
             # Wire up copilot for verification round callbacks
@@ -549,6 +558,151 @@ Write a brief status summary. Examples:
             import logging
             logging.getLogger(__name__).warning(f"Failed to init timelapse orchestrator: {e}")
             self.timelapse_orchestrator = None
+
+    def _init_perception_manager(self):
+        """Initialize the perception manager for VLM-based continuous monitoring"""
+        try:
+            # Examples path is in the gently package directory
+            import gently
+            package_dir = Path(gently.__file__).parent
+            examples_path = package_dir / "examples"
+
+            self.perception_manager = PerceptionManager(
+                claude_client=self.claude,
+                examples_path=examples_path,
+                event_bus=self._event_bus,
+                fast_model="claude-haiku-4-5-20251001",
+                full_model="claude-sonnet-4-5-20250514",
+                deep_model="claude-opus-4-5-20251101",
+            )
+
+            # Set up callbacks for perception events
+            self.perception_manager.set_callbacks(
+                on_hatching_detected=self._on_perception_hatching_detected,
+                on_dead_embryo_detected=self._on_perception_dead_embryo_detected,
+            )
+
+            logger.info("Perception manager initialized")
+        except Exception as e:
+            logger.warning(f"Failed to init perception manager: {e}")
+            self.perception_manager = None
+
+    async def _on_perception_hatching_detected(
+        self,
+        embryo_id: str,
+        timepoint: int,
+        confidence: float,
+        beliefs: dict,
+    ):
+        """Handle hatching detected by perception system"""
+        embryo = self.experiment.embryos.get(embryo_id)
+        if not embryo:
+            return
+
+        logger.info(f"[PERCEPTION] Hatching detected for {embryo_id} at T{timepoint} ({confidence:.0%})")
+
+        # Update embryo state from perception beliefs
+        session = self.perception_manager.get_session(embryo_id)
+        if session:
+            embryo.update_from_perception(
+                beliefs_dict=session.beliefs.to_dict(),
+                evidence_count=len(session.evidence_history),
+            )
+
+        # Mark embryo for skipping (hatching complete)
+        embryo.should_skip = True
+        embryo.skip_reason = f"Hatched at T{timepoint} (perception)"
+
+        # Emit hatching event
+        self._emit_event(EventType.HATCHING_DETECTED, {
+            'embryo_id': embryo_id,
+            'timepoint': timepoint,
+            'confidence': confidence,
+            'source': 'perception',
+        })
+
+        # Mark significant action to save state
+        self._mark_significant_action("hatching_detected")
+
+    async def _on_perception_dead_embryo_detected(
+        self,
+        embryo_id: str,
+        confidence: float,
+        evidence: list,
+    ):
+        """Handle dead embryo detected by perception system"""
+        logger.info(f"[PERCEPTION] Dead embryo suspected: {embryo_id} ({confidence:.0%})")
+
+        # Emit event for alerting/logging
+        self._emit_event(EventType.DEAD_EMBRYO_SUSPECTED, {
+            'embryo_id': embryo_id,
+            'confidence': confidence,
+            'evidence': evidence,
+            'source': 'perception',
+        })
+
+    def _save_perception_sessions(self, session_id: str) -> bool:
+        """
+        Save perception sessions to a file alongside the main session.
+
+        Parameters
+        ----------
+        session_id : str
+            Session ID to save perception data for
+
+        Returns
+        -------
+        bool
+            True if saved successfully
+        """
+        if not self.perception_manager:
+            return True  # Nothing to save
+
+        try:
+            import json
+            perception_file = self.session_manager.sessions_dir / f"{session_id}_perception.json"
+            perception_data = self.perception_manager.to_dict()
+            with open(perception_file, 'w') as f:
+                json.dump(perception_data, f, indent=2, default=str)
+            logger.debug(f"Saved perception sessions to {perception_file}")
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to save perception sessions: {e}")
+            return False
+
+    def _restore_perception_sessions(self, session_id: str) -> bool:
+        """
+        Restore perception sessions from a saved file.
+
+        Parameters
+        ----------
+        session_id : str
+            Session ID to restore perception data for
+
+        Returns
+        -------
+        bool
+            True if restored successfully (or no data to restore)
+        """
+        if not self.perception_manager:
+            return True  # Nothing to restore to
+
+        try:
+            import json
+            perception_file = self.session_manager.sessions_dir / f"{session_id}_perception.json"
+            if not perception_file.exists():
+                logger.debug(f"No perception data found for session {session_id}")
+                return True
+
+            with open(perception_file, 'r') as f:
+                perception_data = json.load(f)
+
+            self.perception_manager.restore_sessions(perception_data)
+            logger.info(f"Restored {len(self.perception_manager.sessions)} perception sessions")
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to restore perception sessions: {e}")
+            return False
 
     def _init_timeline_manager(self):
         """Initialize the timeline manager for event tracking"""
@@ -802,6 +956,21 @@ Write a brief status summary. Examples:
         # Update image storage path for this session
         self.image_manager.set_session(session_id)
 
+        # Restore perception sessions
+        self._restore_perception_sessions(session_id)
+
+        # Restore perception beliefs from embryo state to EmbryoState objects
+        for embryo_id, embryo_data in embryo_states.items():
+            if embryo_id in self.experiment.embryos:
+                embryo = self.experiment.embryos[embryo_id]
+                # Restore perception fields if present
+                if 'perception_beliefs' in embryo_data:
+                    embryo.perception_beliefs = embryo_data.get('perception_beliefs')
+                if 'perception_evidence_count' in embryo_data:
+                    embryo.perception_evidence_count = embryo_data.get('perception_evidence_count', 0)
+                if 'perception_anomaly_flags' in embryo_data:
+                    embryo.perception_anomaly_flags = embryo_data.get('perception_anomaly_flags', {})
+
         # Emit session restored event
         self._emit_event(EventType.SESSION_RESTORED, {
             'session_id': session_id,
@@ -839,7 +1008,13 @@ Write a brief status summary. Examples:
             detector_registry=self.detector_registry,
             system_prompt=self.system_prompt,
         )
-        return self.session_manager.save_session()
+        result = self.session_manager.save_session()
+
+        # Also save perception sessions
+        if result and self.session_id:
+            self._save_perception_sessions(self.session_id)
+
+        return result
 
     def list_sessions(self) -> List[Dict]:
         """
