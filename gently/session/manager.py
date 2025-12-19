@@ -248,7 +248,6 @@ class SessionManager:
         self,
         conversation_history: List[Dict],
         experiment: 'ExperimentState',
-        detector_registry=None,
         system_prompt: str = "",
     ):
         """
@@ -262,8 +261,6 @@ class SessionManager:
             Copilot's conversation history
         experiment : ExperimentState
             Copilot's experiment state
-        detector_registry : DetectorRegistry, optional
-            Copilot's detector registry
         system_prompt : str
             Current system prompt
         """
@@ -296,22 +293,6 @@ class SessionManager:
                     'stage_position': getattr(embryo, 'stage_position', {}),
                     'calibration': getattr(embryo, 'calibration', {}),
                 }
-
-            # Sync detection history
-            if hasattr(embryo, 'detection_results'):
-                session.detection_history[embryo_id] = []
-                for detector_name, results in embryo.detection_results.items():
-                    for result in results:
-                        session.detection_history[embryo_id].append({
-                            'detector': detector_name,
-                            **result
-                        })
-
-        # Sync detector configs
-        if detector_registry:
-            session.detector_configs = {}
-            for detector in detector_registry.list_all():
-                session.detector_configs[detector.name] = detector.to_dict() if hasattr(detector, 'to_dict') else {}
 
         # Sync system prompt
         session.system_prompt = system_prompt

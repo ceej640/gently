@@ -26,9 +26,107 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def create_dual_view_projection(volume: np.ndarray, label: bool = True) -> np.ndarray:
+    """
+    Create side-by-side projection showing both top and side views.
+
+    For diSPIM data with shape (2, Z, Y, X):
+    - View A (index 0) = top view
+    - View B (index 1) = side view
+
+    Parameters
+    ----------
+    volume : np.ndarray
+        4D volume (Views, Z, Y, X) or 3D volume (Z, Y, X)
+    label : bool
+        Whether to add "TOP" and "SIDE" labels
+
+    Returns
+    -------
+    np.ndarray
+        2D image with both views side-by-side (Y, X*2)
+    """
+    logger.debug(f"create_dual_view_projection: input shape {volume.shape}")
+
+    # Handle different input shapes
+    volume = np.squeeze(volume)
+
+    if volume.ndim == 2:
+        # Already 2D - duplicate for both views
+        top_proj = volume
+        side_proj = volume
+    elif volume.ndim == 3:
+        # 3D (Z, Y, X) - create max projection, use same for both
+        top_proj = np.max(volume, axis=0)
+        side_proj = top_proj
+    elif volume.ndim == 4:
+        # 4D (Views, Z, Y, X) - extract both views
+        view_a = volume[0]  # Top view
+        view_b = volume[1] if volume.shape[0] > 1 else volume[0]  # Side view
+        top_proj = np.max(view_a, axis=0)
+        side_proj = np.max(view_b, axis=0)
+    else:
+        raise ValueError(f"Unexpected volume shape: {volume.shape}")
+
+    # Normalize each view independently to 0-255
+    def normalize(img):
+        img = img.astype(np.float32)
+        p_low, p_high = np.percentile(img, [1, 99])
+        if p_high > p_low:
+            img = np.clip((img - p_low) / (p_high - p_low), 0, 1)
+        else:
+            img = np.zeros_like(img)
+        return (img * 255).astype(np.uint8)
+
+    top_proj = normalize(top_proj)
+    side_proj = normalize(side_proj)
+
+    # Ensure same height (resize if needed)
+    if top_proj.shape[0] != side_proj.shape[0]:
+        target_h = max(top_proj.shape[0], side_proj.shape[0])
+        if top_proj.shape[0] < target_h:
+            top_proj = np.pad(top_proj, ((0, target_h - top_proj.shape[0]), (0, 0)))
+        if side_proj.shape[0] < target_h:
+            side_proj = np.pad(side_proj, ((0, target_h - side_proj.shape[0]), (0, 0)))
+
+    # Add separator line
+    separator = np.full((top_proj.shape[0], 2), 128, dtype=np.uint8)
+
+    # Concatenate: TOP | separator | SIDE
+    combined = np.hstack([top_proj, separator, side_proj])
+
+    # Add labels if requested
+    if label:
+        try:
+            from PIL import Image, ImageDraw, ImageFont
+            pil_img = Image.fromarray(combined)
+            draw = ImageDraw.Draw(pil_img)
+
+            # Use default font
+            try:
+                font = ImageFont.truetype("arial.ttf", 14)
+            except:
+                font = ImageFont.load_default()
+
+            # Add labels with background for visibility
+            label_y = 5
+            draw.rectangle([5, label_y, 45, label_y + 16], fill=0)
+            draw.text((8, label_y), "TOP", fill=255, font=font)
+
+            side_x = top_proj.shape[1] + 5
+            draw.rectangle([side_x, label_y, side_x + 45, label_y + 16], fill=0)
+            draw.text((side_x + 3, label_y), "SIDE", fill=255, font=font)
+
+            combined = np.array(pil_img)
+        except Exception as e:
+            logger.debug(f"Could not add labels: {e}")
+
+    return combined
+
+
 def extract_view_a_and_max_project(volume: np.ndarray) -> np.ndarray:
     """
-    Extract View A and create max projection
+    Extract View A and create max projection (legacy single-view function).
 
     Parameters
     ----------
@@ -182,6 +280,45 @@ def compress_image_for_api(image: np.ndarray, max_dimension: int = 800,
     size_kb = len(jpeg_bytes) / 1024
 
     return b64_string, size_kb
+
+
+def prepare_for_perception(
+    volume: np.ndarray,
+    max_dimension: int = 1200,
+    quality: int = 85,
+) -> str:
+    """
+    Prepare a volume for perception by creating a labeled dual-view projection.
+
+    Creates a side-by-side image showing TOP and SIDE views, optimized for
+    the VLM to analyze embryo morphology from multiple angles.
+
+    Parameters
+    ----------
+    volume : np.ndarray
+        4D volume (Views, Z, Y, X) or 3D volume (Z, Y, X)
+    max_dimension : int
+        Maximum width or height in pixels
+    quality : int
+        JPEG quality (1-100)
+
+    Returns
+    -------
+    str
+        Base64-encoded JPEG image with dual views
+    """
+    # Create dual-view projection with labels
+    dual_view = create_dual_view_projection(volume, label=True)
+
+    # Compress for API
+    b64_string, size_kb = compress_image_for_api(
+        dual_view,
+        max_dimension=max_dimension,
+        quality=quality,
+    )
+
+    logger.debug(f"Prepared perception image: {dual_view.shape}, {size_kb:.1f}KB")
+    return b64_string
 
 
 class ImageManager:

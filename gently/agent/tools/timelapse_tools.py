@@ -11,10 +11,6 @@ from ..tool_helpers import (
     require_copilot, get_embryo_or_error,
     require_timelapse_orchestrator, require_developmental_tracker
 )
-from ..detector import (
-    Detector, DetectorConditions, DetectorActions,
-    DetectionMode, ConfidenceLevel
-)
 
 
 @tool(
@@ -401,53 +397,6 @@ def add_interval_speedup_rule(
         msg += f" (for embryos: {', '.join(embryo_ids)})"
 
     return msg
-
-
-@tool(
-    name="enable_pre_hatching_speedup",
-    description="Enable automatic speedup when embryos approach hatching (triggers on pretzel/3-fold stage detection)",
-    category=ToolCategory.EXPERIMENT,
-)
-def enable_pre_hatching_speedup(
-    fast_interval_seconds: float = 30.0,
-    context: Dict = None
-) -> str:
-    """Enable pre-hatching speedup"""
-    copilot, err = require_copilot(context)
-    if err:
-        return err
-
-    orchestrator, err = require_timelapse_orchestrator(copilot)
-    if err:
-        return err
-
-    # Enable pretzel detector if not already enabled
-    from ..detector_registry import get_detector_presets
-
-    presets = get_detector_presets()
-    if 'pretzel' in presets and not copilot.detector_registry.get('pretzel'):
-        preset_data = presets['pretzel']
-        detector = Detector(
-            name='pretzel',
-            description=preset_data['description'],
-            detection_prompt=preset_data['prompt'],
-            enabled=True,
-            conditions=DetectorConditions(),
-            actions=DetectorActions(mode=DetectionMode.AUTO),
-            use_temporal_context=True,
-            temporal_context_size=5,
-            confidence_threshold=ConfidenceLevel.MEDIUM,
-        )
-        copilot.detector_registry.add(detector)
-
-    orchestrator.add_pre_hatching_speedup(fast_interval_seconds)
-
-    return (
-        f"Enabled pre-hatching speedup:\n"
-        f"  - Pretzel detector enabled\n"
-        f"  - When pretzel (3-fold) detected, interval will change to {fast_interval_seconds}s\n"
-        f"  - This helps capture hatching at high temporal resolution"
-    )
 
 
 @tool(
