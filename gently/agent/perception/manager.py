@@ -2,13 +2,13 @@
 Simple Perception Manager.
 
 Orchestrates perception sessions for embryos.
-No belief states, no schedulers, no anomaly detectors - just simple tracking.
+Supports both old PerceptionEngine and new CognitiveEngine.
 """
 
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Literal
 
 import anthropic
 
@@ -18,12 +18,16 @@ from .example_store import ExampleStore
 
 logger = logging.getLogger(__name__)
 
+# Engine type for configuration
+EngineType = Literal["legacy", "cognitive"]
+
 
 class PerceptionManager:
     """
     Simple manager for perception sessions.
 
     One session per embryo, tracks observations over time.
+    Supports both legacy PerceptionEngine and new CognitiveEngine.
     """
 
     def __init__(
@@ -31,6 +35,8 @@ class PerceptionManager:
         claude_client: anthropic.Anthropic,
         examples_path: Path,
         event_bus: Optional[Any] = None,
+        engine_type: EngineType = "legacy",
+        narratives_dir: Optional[Path] = None,
     ):
         """
         Parameters
@@ -41,13 +47,37 @@ class PerceptionManager:
             Root directory for few-shot example images
         event_bus : EventBus, optional
             Event bus for emitting perception events
+        engine_type : str
+            Engine to use: "legacy" (old PerceptionEngine) or "cognitive" (new CognitiveEngine)
+        narratives_dir : Path, optional
+            Directory for cognitive engine narratives (required for cognitive engine)
         """
         self.example_store = ExampleStore(examples_path)
-        self.engine = PerceptionEngine(
-            claude_client=claude_client,
-            example_store=self.example_store,
-        )
         self._event_bus = event_bus
+        self.engine_type = engine_type
+
+        # Initialize appropriate engine
+        if engine_type == "cognitive":
+            from .cognitive import CognitiveEngine
+
+            if narratives_dir is None:
+                narratives_dir = examples_path.parent / "narratives"
+            narratives_dir.mkdir(parents=True, exist_ok=True)
+
+            self.cognitive_engine = CognitiveEngine(
+                client=claude_client,
+                narratives_dir=narratives_dir,
+                example_store=self.example_store,
+            )
+            self.engine = None  # Not used with cognitive engine
+            logger.info("Using CognitiveEngine for perception")
+        else:
+            self.engine = PerceptionEngine(
+                claude_client=claude_client,
+                example_store=self.example_store,
+            )
+            self.cognitive_engine = None
+            logger.info("Using legacy PerceptionEngine for perception")
 
         # Active sessions (one per embryo)
         self.sessions: Dict[str, PerceptionSession] = {}
@@ -103,13 +133,24 @@ class PerceptionManager:
                 should_stop=True,
             )
 
-        # Run perception
+        # Run perception using appropriate engine
         try:
-            result = await self.engine.perceive(
-                image_b64=image_b64,
-                session=session,
-                timepoint=timepoint,
-            )
+            if self.engine_type == "cognitive" and self.cognitive_engine:
+                # Use new cognitive engine
+                cognitive_result = self.cognitive_engine.perceive(
+                    image_b64=image_b64,
+                    embryo_id=embryo_id,
+                    timepoint=timepoint,
+                )
+                # Convert to session.PerceptionResult for compatibility
+                result = cognitive_result.to_session_result()
+            else:
+                # Use legacy engine
+                result = await self.engine.perceive(
+                    image_b64=image_b64,
+                    session=session,
+                    timepoint=timepoint,
+                )
         except Exception as e:
             logger.error(f"Perception failed for {embryo_id}: {e}")
             return PerceptionResult(
