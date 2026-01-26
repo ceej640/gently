@@ -191,7 +191,7 @@ class RichCopilotCLI:
         parts.append(f"<b>Embryos:</b> {embryo_count}")
 
         # Connection status
-        if self.copilot.client and self.copilot.client.is_connected:
+        if self.copilot.backend and self.copilot.backend.is_connected:
             parts.append("<style fg='green'>● Connected</style>")
         else:
             parts.append("<style fg='yellow'>○ Offline</style>")
@@ -332,7 +332,7 @@ class RichCopilotCLI:
             status_lines = []
 
             # Microscope connection status
-            has_hardware = self.copilot.client and self.copilot.client.is_connected
+            has_hardware = self.copilot.backend and self.copilot.backend.is_connected
             devices = getattr(self.copilot, 'devices', {}) or {}
 
             if has_hardware:
@@ -2253,8 +2253,8 @@ class RichCopilotCLI:
                 await self.copilot.stop_viz_server()
 
             # Clean up client session
-            if self.copilot.client:
-                await self.copilot.client.disconnect()
+            if self.copilot.backend:
+                await self.copilot.backend.disconnect()
 
 
 async def run_rich_cli(copilot, history_file: Optional[Path] = None):

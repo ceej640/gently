@@ -425,7 +425,7 @@ class ToolRegistry:
 
         # Check microscope requirement
         if tool.requires_microscope:
-            client = exec_context.get('client')
+            client = exec_context.get('backend')
             if client is None:
                 return "Error: Not connected to microscope server. Start the server and reconnect."
 

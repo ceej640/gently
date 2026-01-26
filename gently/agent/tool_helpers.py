@@ -65,7 +65,7 @@ def require_microscope(context: Dict) -> Tuple[Optional[Any], Optional[str]]:
     tuple
         (client, None) if connected, (None, error_message) if not
     """
-    client = context.get('client')
+    client = context.get('backend')
     if not client:
         return None, "Not connected to microscope. Use connect_microscope first."
     return client, None

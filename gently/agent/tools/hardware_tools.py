@@ -39,7 +39,7 @@ This only moves XY - piezo/galvo are controlled separately during acquisition. M
 async def move_to_embryo(embryo_id: str, context: Dict) -> str:
     """Move stage to embryo position"""
     copilot = context.get('copilot')
-    client = context.get('client')
+    client = context.get('backend')
 
     if not copilot:
         return "Error: No copilot context"
@@ -77,7 +77,7 @@ This reads from hardware - different from embryo stored positions which are in t
 )
 async def get_stage_position(context: Dict) -> str:
     """Get current stage position"""
-    client = context.get('client')
+    client = context.get('backend')
 
     if not client:
         return "Error: No microscope client connected"
@@ -108,7 +108,7 @@ async def move_stage(
     context: Dict = None
 ) -> str:
     """Move stage to arbitrary XY coordinates"""
-    client = context.get('client')
+    client = context.get('backend')
 
     if not client:
         return "Error: No microscope client connected"
@@ -130,7 +130,7 @@ async def move_stage(
 )
 async def set_led(state: str, context: Dict) -> str:
     """Set LED state"""
-    client = context.get('client')
+    client = context.get('backend')
 
     try:
         result = await client.set_led(state)
@@ -150,7 +150,7 @@ async def set_led(state: str, context: Dict) -> str:
 )
 async def get_led_status(context: Dict) -> str:
     """Get LED status"""
-    client = context.get('client')
+    client = context.get('backend')
 
     try:
         result = await client.get_led_status()
@@ -827,7 +827,7 @@ async def fast_calibrate_embryo(
     from gently.claude_client import AsyncClaudeClient
 
     copilot = context.get('copilot')
-    client = context.get('client')
+    client = context.get('backend')
 
     if not copilot:
         return False, "Error: No copilot context", 0
@@ -1093,7 +1093,7 @@ async def calibrate_embryo(
     from gently.claude_client import AsyncClaudeClient
 
     copilot = context.get('copilot')
-    client = context.get('client')
+    client = context.get('backend')
 
     if not copilot:
         return "Error: No copilot context"
@@ -1652,7 +1652,7 @@ async def acquire_volume(
 ) -> str:
     """Acquire single volume - moves to embryo first, uses calibration"""
     copilot = context.get('copilot')
-    client = context.get('client')
+    client = context.get('backend')
 
     if not copilot:
         return "Error: No copilot context"
@@ -1780,7 +1780,7 @@ async def view_image(
     context: Dict = None
 ) -> str:
     """Capture and display bottom camera image with embryo annotations"""
-    client = context.get('client')
+    client = context.get('backend')
     copilot = context.get('copilot')
 
     try:
@@ -1877,7 +1877,7 @@ async def capture_lightsheet(
     context: Dict = None
 ) -> str:
     """Capture and optionally display a single lightsheet image"""
-    client = context.get('client')
+    client = context.get('backend')
     copilot = context.get('copilot')
 
     try:
@@ -1983,7 +1983,7 @@ async def batch_lightsheet(
 ) -> str:
     """Capture lightsheet images from all embryos and show in single napari viewer"""
     copilot = context.get('copilot')
-    client = context.get('client')
+    client = context.get('backend')
 
     if not copilot or not client:
         return "Error: Copilot or microscope not available"

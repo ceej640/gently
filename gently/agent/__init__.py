@@ -1,7 +1,8 @@
 """
 Conversational Microscopy Copilot
 
-AI agent that acts as a scientific collaborator for diSPIM microscopy experiments.
+AI agent that acts as a scientific collaborator for microscopy experiments.
+Backend-agnostic — works with any hardware implementing MicroscopeBackend.
 """
 
 from .copilot import MicroscopyCopilot
@@ -11,9 +12,6 @@ from .image_manager import ImageManager
 from .perception import PerceptionManager, PerceptionResult, PerceptionSession
 from .rich_cli import run_rich_cli, RichCopilotCLI
 from .autocomplete import create_completer, CopilotCompleter
-from .device_factory import create_devices_from_mmcore
-from .microscope_client import MicroscopeClient
-from .queue_server_client import QueueServerClient
 from .tool_registry import ToolRegistry, get_tool_registry, tool, ToolCategory
 
 # Import tools package to register all tools
@@ -21,8 +19,6 @@ from . import tools
 
 __all__ = [
     'MicroscopyCopilot',
-    'MicroscopeClient',
-    'QueueServerClient',
     'EmbryoState',
     'ExperimentState',
     'ImageRecord',
@@ -37,7 +33,6 @@ __all__ = [
     'RichCopilotCLI',
     'create_completer',
     'CopilotCompleter',
-    'create_devices_from_mmcore',
     # Tool registry
     'ToolRegistry',
     'get_tool_registry',

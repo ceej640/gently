@@ -31,7 +31,8 @@ from prompt_toolkit.layout.containers import Window, HSplit
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.formatted_text import HTML
 
-from gently.agent import MicroscopyCopilot, QueueServerClient, run_rich_cli
+from gently.agent import MicroscopyCopilot, run_rich_cli
+from dispim_control import DiSPIMBackend
 from gently.agent.startup import StartupSequence
 from gently.agent.logger import CopilotLogger
 from gently.agent.theme import get_theme
@@ -284,37 +285,37 @@ async def main(offline: bool = False, resume_session: str = None, show_sessions:
     startup = StartupSequence(console=console, logger=logger)
     startup.show_banner()
 
-    client = None
+    backend = None
 
     if not offline:
         # Connect to servers with clean status display
-        client = QueueServerClient(
+        backend = DiSPIMBackend(
             http_url="http://127.0.0.1:60610",
             sam_host="localhost",
             sam_port=18862
         )
 
-        connected = await client.connect()
+        connected = await backend.connect()
 
         # Build status table
         status_lines = []
 
-        if client.is_connected:
+        if backend.is_connected:
             status_lines.append((theme.icon_success, "Queue Server", "connected", theme.success))
-            status = await client.get_status()
+            status = await backend.get_status()
             qs_status = status.get('queue_server', {})
             manager_state = qs_status.get('manager_state', 'unknown')
             status_lines.append((theme.icon_info, "  Manager", manager_state, theme.muted))
         else:
             status_lines.append((theme.icon_error, "Queue Server", "not connected", theme.error))
 
-        if client.has_sam:
+        if backend.has_sam:
             status_lines.append((theme.icon_success, "SAM Server", "connected", theme.success))
         else:
             status_lines.append((theme.icon_warning, "SAM Server", "not connected", theme.warning))
 
-        # Databroker is only usable if Queue Server is connected (client gets nullified otherwise)
-        if client.has_databroker and client.is_connected:
+        # Databroker is only usable if Queue Server is connected
+        if backend.has_databroker and backend.is_connected:
             status_lines.append((theme.icon_success, "Databroker", "connected", theme.success))
         else:
             status_lines.append((theme.icon_warning, "Databroker", "not connected", theme.warning))
@@ -337,15 +338,15 @@ async def main(offline: bool = False, resume_session: str = None, show_sessions:
 
         if not connected:
             console.print(f"\n[{theme.warning}]{theme.icon_warning} Running in offline mode[/]")
-            # Close the session before discarding client
-            await client.disconnect()
-            client = None
+            # Close the session before discarding backend
+            await backend.disconnect()
+            backend = None
     else:
         console.print(f"\n[{theme.muted}]{theme.icon_info} Offline mode[/]")
 
     # Create copilot
     copilot = MicroscopyCopilot(
-        microscope_client=client,
+        backend=backend,
         storage_path=storage_dir,
         session_id=session_to_resume  # Resume specific session if provided
     )

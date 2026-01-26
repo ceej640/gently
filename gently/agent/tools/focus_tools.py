@@ -80,7 +80,7 @@ async def fine_focus(
     context : dict
         Execution context with client and copilot
     """
-    client = context.get('client')
+    client = context.get('backend')
     copilot = context.get('copilot')
 
     if not client:
@@ -244,7 +244,7 @@ async def get_focus_score(
     context : dict
         Execution context
     """
-    client = context.get('client')
+    client = context.get('backend')
 
     if not client:
         return "Error: No microscope client connected"

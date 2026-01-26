@@ -364,7 +364,7 @@ class TimelapseOrchestrator:
         on_volume_callback : callable, optional
             Called after each volume: on_volume_callback(embryo_id, timepoint, volume)
         """
-        self.client = microscope_client
+        self.backend = microscope_client
         self.experiment = experiment_state
         self.perception_manager = perception_manager
         self.on_volume_callback = on_volume_callback
@@ -620,7 +620,7 @@ class TimelapseOrchestrator:
             # Move to embryo position
             pos = embryo.stage_position
             if pos and pos.get('x') is not None:
-                await self.client.move_to_position(pos['x'], pos['y'])
+                await self.backend.move_to_position(pos['x'], pos['y'])
 
             # Get calibration parameters
             cal = embryo.calibration or {}
@@ -634,7 +634,7 @@ class TimelapseOrchestrator:
 
             if acquisition_mode == 'snap':
                 # Single 2D lightsheet image
-                result = await self.client.capture_lightsheet_image(
+                result = await self.backend.capture_lightsheet_image(
                     piezo_position=piezo_center,
                     galvo_position=galvo_center,
                 )
@@ -642,7 +642,7 @@ class TimelapseOrchestrator:
                 exposure_ms = 50.0  # Default snap exposure
             else:
                 # Full 3D volume (default)
-                result = await self.client.acquire_volume(
+                result = await self.backend.acquire_volume(
                     num_slices=embryo.num_slices,
                     exposure_ms=embryo.exposure_ms,
                     galvo_amplitude=galvo_amplitude,

@@ -93,7 +93,7 @@ Always include `context: Dict` as the last parameter:
 ```python
 async def my_tool(embryo_id: str, context: Dict) -> str:
     copilot = context.get('copilot')
-    client = context.get('client')  # Microscope client
+    client = context.get('backend')  # Microscope backend
 ```
 
 ## Return Values
@@ -122,7 +122,7 @@ if err:
 ### Hardware Operations
 
 ```python
-client = context.get('client')
+client = context.get('backend')
 if not client:
     return "Error: Not connected to microscope"
 

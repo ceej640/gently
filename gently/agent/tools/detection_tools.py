@@ -45,7 +45,7 @@ async def detect_embryos(
 ) -> str:
     """Detect embryos automatically"""
     copilot = context.get('copilot')
-    client = context.get('client')
+    client = context.get('backend')
 
     if not copilot:
         return "Error: No copilot context"
@@ -114,7 +114,7 @@ async def manual_mark_embryos(
 ) -> str:
     """Manual embryo marking - shows existing embryos, adds new ones with unique IDs"""
     copilot = context.get('copilot')
-    client = context.get('client')
+    client = context.get('backend')
 
     if not copilot:
         return "Error: No copilot context"
@@ -204,7 +204,7 @@ async def edit_embryos(
 ) -> str:
     """Interactive embryo editor - add, remove, or move embryo positions in napari"""
     copilot = context.get('copilot')
-    client = context.get('client')
+    client = context.get('backend')
 
     if not copilot:
         return "Error: No copilot context"
@@ -354,7 +354,7 @@ async def show_detected_embryos(
 ) -> str:
     """Show detected embryos visualization using experiment.embryos as source of truth"""
     copilot = context.get('copilot')
-    client = context.get('client')
+    client = context.get('backend')
 
     if not copilot:
         return "Error: No copilot context"
