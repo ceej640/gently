@@ -38,6 +38,7 @@ from prompt_toolkit.formatted_text import HTML
 from .autocomplete import create_completer, create_auto_suggest
 from .theme import get_theme, set_theme, list_themes, Theme
 from .timeline import TimelineManager, TimelineEvent, parse_time_delta
+from ..core.event_bus import EventType, get_event_bus
 
 
 # Backwards compatibility - ColorScheme now wraps theme
@@ -1565,6 +1566,8 @@ class RichCopilotCLI:
         if not registry.get(cmd_name):
             return None  # Not a registered command, send to copilot
 
+        get_event_bus().publish(EventType.USER_COMMAND, {"command": cmd_name}, source="cli")
+
         if cmd in ['/quit', '/exit', '/q']:
             return True  # Signal to quit
 
@@ -2432,6 +2435,9 @@ class RichCopilotCLI:
 
                     # Clear the input line to avoid double display
                     self.console.print()
+
+                    # Notify daemon of user activity
+                    get_event_bus().publish(EventType.USER_INPUT, {"message": user_input.strip()}, source="cli")
 
                     # Handle slash commands
                     if user_input.startswith('/'):

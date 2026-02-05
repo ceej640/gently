@@ -432,7 +432,22 @@ Write a brief status summary. Examples:
             (now - self._context_summary_time).total_seconds() > self._context_summary_ttl):
             self._context_summary_cache = await self._generate_context_summary()
             self._context_summary_time = now
-        return self._context_summary_cache
+
+        summary = self._context_summary_cache
+
+        # Append daemon's cognitive context if available
+        daemon = getattr(self, '_daemon', None)
+        if daemon and hasattr(daemon, 'context_store'):
+            try:
+                from ..context.serialization import context_summary as format_context
+                ctx = daemon.context_store.load_active()
+                daemon_summary = format_context(ctx)
+                if daemon_summary and daemon_summary != "Empty context":
+                    summary = (summary + "\n\n" + daemon_summary) if summary else daemon_summary
+            except Exception:
+                pass  # Best-effort
+
+        return summary
 
     def invalidate_context_cache(self):
         """Invalidate the context summary cache to force regeneration."""

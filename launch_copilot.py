@@ -236,7 +236,7 @@ def list_sessions(store: GentlyStore, console: Console):
     console.print(f"\n[{theme.muted}]Use: python launch_copilot.py --resume <id>[/]")
 
 
-async def main(offline: bool = False, resume_session: str = None, show_sessions: bool = False, pick_session: bool = False):
+async def main(offline: bool = False, full_offline: bool = False, resume_session: str = None, show_sessions: bool = False, pick_session: bool = False):
     theme = get_theme()
     console = Console()
 
@@ -334,7 +334,10 @@ async def main(offline: bool = False, resume_session: str = None, show_sessions:
             await client.disconnect()
             client = None
     else:
-        console.print(f"\n[{theme.muted}]{theme.icon_info} Offline mode[/]")
+        if full_offline:
+            console.print(f"\n[{theme.muted}]{theme.icon_info} Full offline mode (no devices, no LLM)[/]")
+        else:
+            console.print(f"\n[{theme.muted}]{theme.icon_info} Device offline mode (LLM active)[/]")
 
     # Store was created earlier for session queries
     console.print(f"  [{theme.muted}]Store: {storage_dir}[/]")
@@ -392,7 +395,7 @@ async def main(offline: bool = False, resume_session: str = None, show_sessions:
         perception_manager=copilot.perception_manager,
         message_handler=message_handler,
     )
-    think_fn = await create_think_function(copilot.claude)
+    think_fn = await create_think_function(copilot.claude if not full_offline else None)
     daemon = Daemon(
         context_store=context_store,
         think_fn=think_fn,
@@ -428,7 +431,8 @@ if __name__ == "__main__":
         exit(1)
 
     parser = argparse.ArgumentParser(description="Launch Microscopy Copilot")
-    parser.add_argument("--offline", action="store_true", help="Run without server connections")
+    parser.add_argument("--offline", action="store_true", help="Run without device layer (LLM still active)")
+    parser.add_argument("--full-offline", action="store_true", help="Run without device layer or LLM API")
     parser.add_argument("--sessions", action="store_true", help="List available sessions and exit")
     parser.add_argument("--resume", nargs="?", const="__PICK__", metavar="ID",
                         help="Resume a session. Without ID: shows picker. With ID: resumes that session.")
@@ -439,7 +443,8 @@ if __name__ == "__main__":
     resume_id = args.resume if args.resume and args.resume != "__PICK__" else None
 
     asyncio.run(main(
-        offline=args.offline,
+        offline=args.offline or args.full_offline,
+        full_offline=args.full_offline,
         show_sessions=args.sessions,
         resume_session=resume_id,
         pick_session=pick_session

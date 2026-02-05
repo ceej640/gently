@@ -123,28 +123,35 @@ class Scheduler:
         self.last_task: Optional[Task] = None
 
     async def run(self):
-        """Main heartbeat loop."""
+        """Main heartbeat loop.
+
+        Two execution paths per heartbeat:
+        1. Clock-gated — cognitive tasks (LLM calls) only run when the
+           clock allows, to avoid rapid-fire API calls.
+        2. Immediate — physical and interaction tasks drain every heartbeat
+           regardless of the clock, so injected / queued actions aren't blocked.
+        """
         self.alive = True
         logger.info("Scheduler started")
 
         while self.alive:
             try:
                 should, trigger, trigger_data = self.clock.should_think()
-
                 if should:
-                    # Convert trigger to task if no matching task in queue
                     self._ensure_trigger_task(trigger, trigger_data)
 
-                    # Execute next task
-                    task = self.queue.get_next()
-                    if task:
+                task = self.queue.get_next()
+                if task:
+                    # Cognitive tasks are clock-gated (they cost an LLM call)
+                    if task.category == TaskCategory.COGNITIVE and not should:
+                        pass  # Wait for clock
+                    else:
                         result = await self._execute(task)
                         self.last_result = result
                         self.last_task = task
-
-                    self.clock.record_think(
-                        self._mode_for_last_task() or ThinkingMode.FAST
-                    )
+                        self.clock.record_think(
+                            self._select_mode_for_task(task)
+                        )
 
             except Exception as e:
                 logger.error(f"Scheduler heartbeat error: {e}", exc_info=True)
@@ -400,7 +407,10 @@ class Scheduler:
         return base_mode
 
     def _mode_for_last_task(self) -> Optional[ThinkingMode]:
-        """Get the mode used for the last task (for clock recording)."""
+        """Get the mode used for the last task (for clock recording).
+
+        Kept for status/debug introspection — not used in the main loop.
+        """
         if self.last_task and self.last_task.category == TaskCategory.COGNITIVE:
             return self._select_mode_for_task(self.last_task)
         return ThinkingMode.FAST

@@ -8,6 +8,7 @@ This module contains the Agent class that:
 - Handles escalation-aware responses
 """
 
+import asyncio
 import logging
 import time
 from typing import Any, Dict, Optional
@@ -108,7 +109,10 @@ class Agent:
         }[mode]
 
         try:
-            response = self.client.messages.create(
+            # Run synchronous Anthropic client in a thread so we don't
+            # block the event loop (the daemon shares it with the CLI).
+            response = await asyncio.to_thread(
+                self.client.messages.create,
                 model=model,
                 max_tokens=max_tokens,
                 system=self._system_prompt,
