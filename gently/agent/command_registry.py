@@ -20,6 +20,7 @@ class CommandCategory(Enum):
     SESSION = auto()       # /sessions, /resume, /save, /import-embryos
     APPEARANCE = auto()    # /theme, /history, /tokens
     DIAGNOSTICS = auto()   # /benchmark
+    DAEMON = auto()        # /daemon, /tasks, /inject
 
 
 @dataclass
@@ -176,6 +177,7 @@ class CommandRegistry:
             CommandCategory.SESSION: "Session",
             CommandCategory.APPEARANCE: "Appearance",
             CommandCategory.DIAGNOSTICS: "Diagnostics",
+            CommandCategory.DAEMON: "Daemon",
         }
 
         for category in CommandCategory:
@@ -533,6 +535,34 @@ Requires microscope connection and at least one registered embryo.""",
             ),
         ],
         category=CommandCategory.DIAGNOSTICS,
+    ))
+
+    # === Daemon Commands ===
+    registry.register(CommandDefinition(
+        name="/daemon",
+        description="Show daemon status or control it",
+        help_text="Show daemon status, or pause/resume the background thinking daemon.",
+        subcommands=[
+            SubCommand(name="pause", description="Pause the daemon scheduler"),
+            SubCommand(name="resume", description="Resume the daemon scheduler"),
+        ],
+        category=CommandCategory.DAEMON,
+    ))
+
+    registry.register(CommandDefinition(
+        name="/tasks",
+        description="Show daemon task queue",
+        help_text="Display pending tasks in the daemon's task queue, sorted by priority.",
+        category=CommandCategory.DAEMON,
+    ))
+
+    registry.register(CommandDefinition(
+        name="/inject",
+        description="Inject a cognitive task",
+        help_text="Inject an observation task into the daemon's task queue.\n\nExample: /inject check embryo_1 stage",
+        positional_arg="description",
+        positional_hint="description",
+        category=CommandCategory.DAEMON,
     ))
 
 

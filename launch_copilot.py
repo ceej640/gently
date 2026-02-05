@@ -241,7 +241,9 @@ async def main(offline: bool = False, resume_session: str = None, show_sessions:
     console = Console()
 
     # Storage directory (unified with GentlyStore)
-    storage_dir = Path("D:/Gently2")
+    # D:/Gently2 on microscope computer, ~/.gently locally
+    default_storage = Path("D:/Gently2") if Path("D:/Gently2").exists() else Path.home() / ".gently"
+    storage_dir = Path(os.getenv("GENTLY_STORAGE", default_storage))
     storage_dir.mkdir(exist_ok=True)
 
     # Create unified store (GentlyStore) early for session queries
@@ -373,8 +375,47 @@ async def main(offline: bool = False, resume_session: str = None, show_sessions:
     console.print(f"  [{theme.info}]{theme.icon_info}[/] Slash commands: [{theme.tool}]/embryos[/], [{theme.tool}]/status[/], [{theme.tool}]/help[/]")
     console.print(f"  [{theme.muted}]Log: {logger.log_file}[/]\n")
 
-    # Run CLI
-    await run_rich_cli(copilot, history_file=storage_dir / ".copilot_history")
+    # Start daemon alongside CLI
+    from gently.context import ContextStore
+    from gently.capabilities import Capabilities
+    from gently.agent_core.reasoning import create_think_function
+    from gently.daemon import Daemon
+
+    context_store = ContextStore(storage_dir / "context.db")
+    daemon_messages = []
+
+    def message_handler(message):
+        daemon_messages.append(message)
+
+    capabilities = Capabilities(
+        device_client=client,
+        perception_manager=copilot.perception_manager,
+        message_handler=message_handler,
+    )
+    think_fn = await create_think_function(copilot.claude)
+    daemon = Daemon(
+        context_store=context_store,
+        think_fn=think_fn,
+        capabilities=capabilities,
+    )
+    daemon.set_user_present(True)
+    copilot._daemon = daemon
+    copilot._daemon_messages = daemon_messages
+
+    console.print(f"  [{theme.muted}]Daemon: context.db[/]")
+
+    # Run CLI with daemon
+    daemon_task = asyncio.create_task(daemon.start())
+    try:
+        await run_rich_cli(copilot, history_file=storage_dir / ".copilot_history")
+    finally:
+        await daemon.stop()
+        daemon_task.cancel()
+        try:
+            await daemon_task
+        except asyncio.CancelledError:
+            pass
+        context_store.close()
 
 
 if __name__ == "__main__":

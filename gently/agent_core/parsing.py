@@ -239,6 +239,9 @@ def parse_context_updates(text: str) -> ContextUpdates:
     for item in items:
         update_type = item.get("update")
         content = item.get("content", {})
+        if isinstance(content, str):
+            # Parser returned a string instead of dict — wrap it
+            content = {"content": content}
 
         if update_type == "expectation":
             exp = Expectation(

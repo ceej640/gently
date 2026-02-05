@@ -194,7 +194,13 @@ class RichCopilotCLI:
         if self.copilot.client and self.copilot.client.is_connected:
             parts.append("<style fg='green'>● Connected</style>")
         else:
-            parts.append("<style fg='yellow'>○ Offline</style>")
+            parts.append("○ Offline")
+
+        # Daemon status
+        daemon = getattr(self.copilot, '_daemon', None)
+        if daemon and daemon.alive:
+            pending = daemon.queue.pending_count
+            parts.append(f"<b>Daemon:</b> {pending} pending")
 
         return HTML(" │ ".join(parts))
 
@@ -211,6 +217,7 @@ class RichCopilotCLI:
             CommandCategory.INSPECTION: "Inspect",
             CommandCategory.SESSION: "Session",
             CommandCategory.APPEARANCE: "Style",
+            CommandCategory.DAEMON: "Daemon",
         }
 
         cmd_lines = []
@@ -277,6 +284,35 @@ class RichCopilotCLI:
         self.console.print(
             Text(f"[System] {message}", style=theme.system)
         )
+
+    def _display_daemon_messages(self):
+        """Drain and display any queued daemon messages."""
+        messages = getattr(self.copilot, '_daemon_messages', None)
+        if not messages:
+            return
+
+        theme = get_theme()
+        while messages:
+            msg = messages.pop(0)
+            timestamp = msg.timestamp.strftime("%H:%M:%S")
+
+            # Style by priority
+            priority_styles = {
+                "urgent": f"bold {theme.error}",
+                "high": theme.warning,
+                "normal": theme.system,
+                "low": theme.muted,
+            }
+            style = priority_styles.get(msg.priority, theme.system)
+
+            panel = Panel(
+                Text(msg.content, style=style),
+                title=f"[{theme.muted}]{timestamp} daemon[/]",
+                title_align="left",
+                border_style=theme.system,
+                box=box.SIMPLE,
+            )
+            self.console.print(panel)
 
     def print_tool_call(self, tool_name: str, tool_input: Dict[str, Any], duration: Optional[float] = None):
         """Print tool call information"""
@@ -1946,6 +1982,132 @@ class RichCopilotCLI:
 
             return False  # Handled, continue loop
 
+        elif cmd == '/daemon' or cmd.startswith('/daemon '):
+            # Daemon status and control
+            theme = get_theme()
+            daemon = getattr(self.copilot, '_daemon', None)
+
+            if not daemon:
+                self.console.print(f"[{theme.muted}]Daemon not running[/]")
+                return False
+
+            parts = command.strip().split()
+            subcmd = parts[1] if len(parts) > 1 else None
+
+            if subcmd == 'pause':
+                await daemon.scheduler.stop()
+                self.console.print(f"[{theme.warning}]Daemon scheduler paused[/]")
+            elif subcmd == 'resume':
+                if not daemon.scheduler.alive:
+                    asyncio.create_task(daemon.scheduler.run())
+                    self.console.print(f"[{theme.success}]Daemon scheduler resumed[/]")
+                else:
+                    self.console.print(f"[{theme.muted}]Daemon scheduler already running[/]")
+            else:
+                # Show status table
+                status = daemon.status()
+                clock = status.get("clock", {})
+                sched = status.get("scheduler", {})
+
+                table = Table(
+                    title="Daemon Status",
+                    box=box.SIMPLE,
+                    show_header=False,
+                    title_style=f"bold {theme.primary}",
+                )
+                table.add_column("Key", style=theme.muted)
+                table.add_column("Value")
+
+                alive_style = theme.success if status["alive"] else theme.error
+                table.add_row("Alive", f"[{alive_style}]{status['alive']}[/]")
+                table.add_row("Arousal", f"{clock.get('arousal', 0):.2f}")
+                table.add_row("Pace", f"{clock.get('pace_seconds', 0):.1f}s")
+                table.add_row("Tasks executed", str(sched.get("tasks_executed", 0)))
+                queue = sched.get("queue", {})
+                table.add_row("Queue total", str(queue.get("total", 0)))
+                table.add_row("Queue pending", str(queue.get("by_status", {}).get("pending", 0)))
+
+                self.console.print(table)
+
+            return False  # Handled, continue loop
+
+        elif cmd == '/tasks':
+            # Show daemon task queue
+            theme = get_theme()
+            daemon = getattr(self.copilot, '_daemon', None)
+
+            if not daemon:
+                self.console.print(f"[{theme.muted}]Daemon not running[/]")
+                return False
+
+            pending = daemon.queue.pending()
+            if not pending:
+                self.console.print(f"[{theme.muted}]Task queue empty[/]")
+                return False
+
+            table = Table(
+                title=f"Task Queue ({len(pending)} pending)",
+                box=box.SIMPLE,
+                show_header=True,
+                header_style=f"bold {theme.primary}",
+            )
+            table.add_column("Type", style=theme.info)
+            table.add_column("Priority", justify="right")
+            table.add_column("Target", style=theme.muted)
+            table.add_column("Reason")
+
+            for task in pending[:15]:
+                pri_style = theme.error if task.priority >= 75 else (theme.warning if task.priority >= 50 else theme.muted)
+                table.add_row(
+                    task.type.value,
+                    f"[{pri_style}]{task.priority:.0f}[/]",
+                    task.target or "-",
+                    task.reason or "-",
+                )
+
+            self.console.print(table)
+
+            if len(pending) > 15:
+                self.console.print(f"[{theme.muted}]... and {len(pending) - 15} more[/]")
+
+            # Category summary
+            from gently.daemon import TaskCategory
+            by_cat = {}
+            for t in pending:
+                cat = t.category.value
+                by_cat[cat] = by_cat.get(cat, 0) + 1
+            summary = ", ".join(f"{v} {k}" for k, v in by_cat.items())
+            self.console.print(f"[{theme.muted}]Categories: {summary}[/]")
+
+            return False  # Handled, continue loop
+
+        elif cmd == '/inject' or cmd.startswith('/inject '):
+            # Inject a cognitive task
+            theme = get_theme()
+            daemon = getattr(self.copilot, '_daemon', None)
+
+            if not daemon:
+                self.console.print(f"[{theme.muted}]Daemon not running[/]")
+                return False
+
+            parts = command.strip().split(maxsplit=1)
+            if len(parts) < 2 or not parts[1].strip():
+                self.console.print(f"[{theme.warning}]Usage: /inject <description>[/]")
+                return False
+
+            description = parts[1].strip()
+
+            from gently.daemon import make_task, TaskType, TaskPriority
+            task = make_task(
+                type=TaskType.OBSERVE,
+                priority=TaskPriority.HIGH,
+                reason=description,
+            )
+            daemon.inject_task(task)
+            self.console.print(f"[{theme.success}]Injected task {task.id}: {description}[/]")
+
+            return False  # Handled, continue loop
+
         elif cmd == '/timelapse' or cmd == '/timelapse watch':
             # Show timelapse status (with optional live watch mode)
             watch_mode = 'watch' in cmd
@@ -2256,6 +2418,9 @@ class RichCopilotCLI:
         try:
             while self._running:
                 try:
+                    # Display any queued daemon messages
+                    self._display_daemon_messages()
+
                     # Get user input with autocomplete
                     theme = get_theme()
                     user_input = await self.session.prompt_async(

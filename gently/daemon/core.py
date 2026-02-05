@@ -4,11 +4,14 @@ Daemon — The main loop that keeps the agent thinking.
 The daemon:
 - Runs continuously in the background
 - Listens for events from the event bus
-- Thinks at a pace determined by arousal
-- Executes actions through capabilities
+- Executes tasks through the scheduler (cognitive/physical/interaction)
 - Updates context based on what it learns
 - Monitors expectations and triggers on approaching/expired
 - Supports escalation from fast scans to deeper thinking
+
+The scheduler is the daemon's execution engine. Events, expectations, and
+time generate typed tasks; the scheduler picks the highest-priority task
+and executes it through the appropriate path (LLM, hardware, or interaction).
 """
 
 import asyncio
@@ -30,6 +33,19 @@ from .clock import (
     EscalationReason,
 )
 from .types import WorldState, ThinkResult
+from .task import (
+    Task,
+    TaskCategory,
+    TaskPriority,
+    TaskQueue,
+    TaskResult,
+    TaskStatus,
+    TaskType,
+    make_task,
+)
+from .scheduler import Scheduler
+
+logger = logging.getLogger(__name__)
 
 
 class ExpectationMonitor:
@@ -110,14 +126,12 @@ class Daemon:
     The continuously thinking agent daemon.
 
     Runs async loops:
-    - think_loop: Main heartbeat, calls LLM
+    - scheduler: Task-driven heartbeat (replaces the old think loop)
     - decay_loop: Decays arousal over time
-    - expectation_loop: Monitors expectations
+    - expectation_loop: Monitors expectations, adds tasks to queue
 
-    Enhanced features:
-    - Escalation from fast scans to deeper thinking
-    - Expectation monitoring with triggers
-    - Context richness calculation for model selection
+    The scheduler is the execution engine. Events generate tasks in the
+    queue; the scheduler picks the highest-priority task and executes it.
     """
 
     def __init__(
@@ -146,6 +160,17 @@ class Daemon:
         self.capabilities = capabilities
         self.clock = Clock()
 
+        # Task queue and scheduler
+        self.queue = TaskQueue()
+        self.scheduler = Scheduler(
+            queue=self.queue,
+            context_store=context_store,
+            clock=self.clock,
+            think_fn=think_fn,
+            capabilities=capabilities,
+            event_bus=self.event_bus,
+        )
+
         # Expectation monitor
         self.expectation_monitor = ExpectationMonitor(context_store, self.clock)
 
@@ -156,16 +181,6 @@ class Daemon:
 
         # Event subscriptions (unsubscribe functions)
         self._unsubs: List[Callable] = []
-
-        # Statistics
-        self.think_count = 0
-        self.think_by_mode: Dict[ThinkingMode, int] = {
-            ThinkingMode.FAST: 0,
-            ThinkingMode.MODERATE: 0,
-            ThinkingMode.DEEP: 0,
-        }
-        self.escalation_count = 0
-        self.last_think_result: Optional[ThinkResult] = None
 
     async def start(self):
         """Start the daemon."""
@@ -185,7 +200,7 @@ class Daemon:
         # Run all loops
         try:
             await asyncio.gather(
-                self._think_loop(),
+                self.scheduler.run(),
                 self._decay_loop(),
                 self._expectation_loop(),
             )
@@ -198,6 +213,7 @@ class Daemon:
         """Stop the daemon."""
         logger.info("Stopping daemon")
         self.alive = False
+        await self.scheduler.stop()
 
     def _subscribe_events(self):
         """Subscribe to relevant events."""
@@ -315,146 +331,8 @@ class Daemon:
         )
 
     # ================================================================
-    # Main Loops
+    # Support Loops
     # ================================================================
-
-    async def _think_loop(self):
-        """Main heartbeat loop."""
-        while self.alive:
-            should, trigger, trigger_data = self.clock.should_think()
-
-            if should:
-                try:
-                    await self._think_cycle(trigger, trigger_data)
-                except Exception as e:
-                    logger.error(f"Think cycle error: {e}", exc_info=True)
-
-            # Sleep briefly before checking again
-            await asyncio.sleep(0.5)
-
-    async def _think_cycle(self, trigger: ThinkTrigger, trigger_data: Optional[Dict] = None):
-        """Execute one thinking cycle."""
-        start_time = time.time()
-
-        # 1. Gather inputs
-        context = self.context_store.load_active()
-        world = await self._sample_world(context)
-
-        # 2. Calculate context richness for model selection
-        context_richness = self._calculate_context_richness(context)
-        world.context_richness = context_richness
-
-        # 3. Select thinking depth
-        mode = select_model(
-            trigger=trigger,
-            arousal=self.clock.arousal.level,
-            context_richness=context_richness,
-            has_pending_expectations=len(context.pending_expectations) > 0,
-            has_watchpoints=len(context.active_watchpoints) > 0,
-            user_present=self.user_present,
-            can_deep_think=self.clock.can_deep_think(),
-            trigger_data=trigger_data,
-        )
-
-        logger.info(
-            f"Think cycle: trigger={trigger.value}, mode={mode.value}, "
-            f"arousal={self.clock.arousal.level:.2f}, richness={context_richness:.2f}"
-        )
-
-        # 4. Think (call LLM if available)
-        if self.think_fn:
-            result = await self.think_fn(context, world, trigger, mode, trigger_data)
-        else:
-            # Placeholder result when no think function
-            result = ThinkResult(
-                reasoning="No think function configured",
-                model_used="none",
-            )
-
-        result.duration_ms = (time.time() - start_time) * 1000
-        result.mode = mode
-        result.trigger = trigger
-
-        # 5. Execute actions
-        if self.capabilities and result.actions:
-            for action in result.actions:
-                try:
-                    await self._execute_action(action)
-                except Exception as e:
-                    logger.error(f"Action execution error: {e}")
-
-        # 6. Update context
-        self.context_store.apply_updates(result.context_updates)
-
-        # 7. Check for escalation (only from fast scans)
-        escalation = should_escalate(result, context, trigger, mode)
-        if escalation:
-            self.clock.request_escalation(escalation)
-            self.escalation_count += 1
-            logger.info(f"Escalation triggered: {escalation.reason.value}")
-
-        # 8. Record
-        self.clock.record_think(mode)
-        self.think_count += 1
-        self.think_by_mode[mode] += 1
-        self.last_think_result = result
-
-        logger.debug(
-            f"Think complete: {result.duration_ms:.0f}ms, mode={mode.value}, "
-            f"{len(result.actions)} actions, {len(result.observations_noted)} observations"
-        )
-
-    def _calculate_context_richness(self, context: Context) -> float:
-        """
-        Calculate how rich the current context is.
-
-        Higher richness suggests more thorough thinking is valuable.
-        """
-        score = 0.0
-
-        # Active campaigns add context
-        if context.active_campaigns:
-            score += 0.2
-
-        # Tracked embryos add context
-        embryo_count = len(context.understanding.embryo_states)
-        score += min(0.3, embryo_count * 0.05)
-
-        # Pending expectations need checking
-        exp_count = len(context.pending_expectations)
-        score += min(0.2, exp_count * 0.1)
-
-        # Active watchpoints need attention
-        wp_count = len(context.active_watchpoints)
-        score += min(0.2, wp_count * 0.1)
-
-        # Recent observations provide context
-        obs_count = len(context.observations)
-        score += min(0.1, obs_count * 0.01)
-
-        return min(1.0, score)
-
-    async def _execute_action(self, action: Dict[str, Any]):
-        """Execute a single action through capabilities."""
-        action_type = action.get("type")
-        params = action.get("params", {})
-
-        if self.capabilities:
-            await self.capabilities.execute(action_type, params)
-        else:
-            logger.warning(f"No capabilities to execute action: {action_type}")
-
-    async def _sample_world(self, context: Context) -> WorldState:
-        """Sample current world state."""
-        recent = self.event_bus.get_history(limit=10)
-
-        return WorldState(
-            current_time=datetime.now(),
-            user_present=self.user_present,
-            microscope_status=None,  # TODO: Get from capabilities
-            recent_events=recent,
-            session_id=self.current_session_id,
-        )
 
     async def _decay_loop(self):
         """Decay arousal over time."""
@@ -466,7 +344,7 @@ class Daemon:
             await asyncio.sleep(1.0)
 
     async def _expectation_loop(self):
-        """Monitor expectations periodically."""
+        """Monitor expectations periodically, adding tasks to queue."""
         while self.alive:
             # Check every 30 seconds
             await asyncio.sleep(30.0)
@@ -478,6 +356,7 @@ class Daemon:
                 results = self.expectation_monitor.check()
                 for result in results:
                     if result["type"] in ("approaching", "expired"):
+                        # Add trigger for the clock (pacing)
                         self.clock.add_trigger(ThinkTrigger.EXPECTATION, result)
                         logger.info(
                             f"Expectation {result['type']}: {result['target']} - {result['prediction']}"
@@ -493,20 +372,15 @@ class Daemon:
         """Get daemon status."""
         return {
             "alive": self.alive,
-            "think_count": self.think_count,
-            "think_by_mode": {k.value: v for k, v in self.think_by_mode.items()},
-            "escalation_count": self.escalation_count,
+            "scheduler": self.scheduler.status(),
             "clock": self.clock.status(),
             "user_present": self.user_present,
             "session_id": self.current_session_id,
-            "last_think": {
-                "model": self.last_think_result.model_used if self.last_think_result else None,
-                "mode": self.last_think_result.mode.value if self.last_think_result else None,
-                "trigger": self.last_think_result.trigger.value if self.last_think_result else None,
-                "duration_ms": self.last_think_result.duration_ms if self.last_think_result else None,
-                "actions": len(self.last_think_result.actions) if self.last_think_result else 0,
-            } if self.last_think_result else None,
         }
+
+    def inject_task(self, task: Task):
+        """Inject a task from an external source (CLI, test, etc.)."""
+        self.queue.inject(task)
 
     def inject_trigger(self, trigger: ThinkTrigger, data: Optional[Dict] = None):
         """Inject a trigger from external source."""
