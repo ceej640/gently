@@ -24,7 +24,7 @@ import time
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 
-from ..core.event_bus import EventBus
+from ..core.event_bus import EventBus, EventType
 from ..context import Context, ContextStore
 from .clock import Clock, ThinkTrigger, ThinkingMode, select_model
 from .types import WorldState, ThinkResult
@@ -168,10 +168,32 @@ class Scheduler:
     # Task Execution
     # ================================================================
 
+    def _emit_task_event(self, task: Task):
+        """Emit a DAEMON_TASK_UPDATE event for the current task state."""
+        self.event_bus.publish(
+            EventType.DAEMON_TASK_UPDATE,
+            data={
+                "id": task.id,
+                "type": task.type.value,
+                "category": task.category.value,
+                "status": task.status.value,
+                "priority": task.priority,
+                "target": task.target,
+                "reason": task.reason,
+                "parent_id": task.parent_id,
+                "created_at": task.created_at.isoformat(),
+                "started_at": task.started_at.isoformat() if task.started_at else None,
+                "completed_at": task.completed_at.isoformat() if task.completed_at else None,
+                "error": task.error,
+            },
+            source="scheduler",
+        )
+
     async def _execute(self, task: Task) -> TaskResult:
         """Execute a single task and handle its result."""
         task.status = TaskStatus.RUNNING
         task.started_at = datetime.now()
+        self._emit_task_event(task)
 
         logger.info(f"Executing {task}")
 
@@ -194,6 +216,7 @@ class Scheduler:
 
             # Complete the task
             self.queue.complete(task.id, result.data)
+            self._emit_task_event(task)
 
             # Stats
             self.tasks_executed += 1
@@ -210,6 +233,7 @@ class Scheduler:
         except Exception as e:
             logger.error(f"Task {task.id} failed: {e}", exc_info=True)
             self.queue.fail(task.id, str(e))
+            self._emit_task_event(task)
             return TaskResult(task_id=task.id, success=False)
 
     async def _execute_cognitive(self, task: Task) -> TaskResult:

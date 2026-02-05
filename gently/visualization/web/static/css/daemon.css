@@ -1,0 +1,297 @@
+/* Daemon Observability Tab */
+
+.daemon-container {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 16px;
+    height: calc(100vh - 120px);
+    overflow-y: auto;
+}
+
+/* Status bar */
+.daemon-status-bar {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    padding: 8px 16px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 13px;
+}
+
+.daemon-status-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.daemon-status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-muted);
+}
+
+.daemon-status-dot.alive {
+    background: #51cf66;
+    box-shadow: 0 0 6px #51cf6680;
+}
+
+.daemon-status-dot.dead {
+    background: #ff6b6b;
+}
+
+.daemon-status-label {
+    color: var(--text-muted);
+}
+
+.daemon-status-value {
+    color: var(--text);
+    font-family: monospace;
+}
+
+/* Grid layouts */
+.daemon-grid-top {
+    display: grid;
+    grid-template-columns: 1fr 2fr;
+    gap: 12px;
+    min-height: 220px;
+}
+
+.daemon-grid-middle {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 12px;
+    min-height: 200px;
+}
+
+/* Panel card */
+.daemon-panel {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+}
+
+.daemon-panel-title {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+}
+
+/* Arousal gauge */
+.gauge-container {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+
+.gauge-canvas-wrap {
+    position: relative;
+    width: 100%;
+    max-width: 200px;
+    aspect-ratio: 2 / 1.2;
+}
+
+.gauge-canvas-wrap canvas {
+    width: 100%;
+    height: 100%;
+}
+
+.gauge-stats {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px 12px;
+    margin-top: 8px;
+    font-size: 11px;
+    width: 100%;
+}
+
+.gauge-stat {
+    display: flex;
+    justify-content: space-between;
+}
+
+.gauge-stat-label {
+    color: var(--text-muted);
+}
+
+.gauge-stat-value {
+    color: var(--text);
+    font-family: monospace;
+    font-size: 11px;
+}
+
+/* Chart containers */
+.chart-container {
+    flex: 1;
+    position: relative;
+    min-height: 150px;
+}
+
+.chart-container canvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100% !important;
+    height: 100% !important;
+}
+
+/* Task flow table */
+.daemon-task-flow {
+    flex: 1;
+    min-height: 200px;
+    max-height: 350px;
+}
+
+.task-flow-scroll {
+    overflow-y: auto;
+    max-height: 300px;
+}
+
+.task-flow-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+
+.task-flow-table th {
+    position: sticky;
+    top: 0;
+    background: var(--bg-card);
+    text-align: left;
+    padding: 4px 8px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+}
+
+.task-flow-table td {
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 200px;
+}
+
+.task-flow-table tr.new-row {
+    animation: task-flash 0.6s ease-out;
+}
+
+@keyframes task-flash {
+    from { background: var(--accent-bg, rgba(74, 158, 255, 0.15)); }
+    to { background: transparent; }
+}
+
+/* Status badges */
+.task-status-badge {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 9px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+.task-status-badge.pending {
+    background: rgba(74, 158, 255, 0.15);
+    color: #4a9eff;
+}
+
+.task-status-badge.running {
+    background: rgba(255, 146, 43, 0.15);
+    color: #ff922b;
+}
+
+.task-status-badge.completed {
+    background: rgba(81, 207, 102, 0.15);
+    color: #51cf66;
+}
+
+.task-status-badge.failed {
+    background: rgba(255, 107, 107, 0.15);
+    color: #ff6b6b;
+}
+
+.task-status-badge.cancelled {
+    background: rgba(134, 142, 150, 0.15);
+    color: #868e96;
+}
+
+/* Category indicators */
+.cat-indicator {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+    margin-right: 4px;
+    vertical-align: middle;
+}
+
+.cat-indicator.cognitive { background: #4a9eff; }
+.cat-indicator.physical { background: #51cf66; }
+.cat-indicator.interaction { background: #cc5de8; }
+
+/* Priority mini-bar */
+.priority-bar {
+    display: inline-block;
+    width: 40px;
+    height: 6px;
+    background: var(--border);
+    border-radius: 3px;
+    overflow: hidden;
+    vertical-align: middle;
+}
+
+.priority-bar-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.3s ease;
+}
+
+/* Pulse animation for daemon tab badge */
+.daemon-pulse {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #51cf66;
+    margin-left: 4px;
+    vertical-align: middle;
+    opacity: 0;
+    transition: opacity 0.3s;
+}
+
+.daemon-pulse.active {
+    opacity: 1;
+    animation: daemon-pulse-anim 2s ease-in-out infinite;
+}
+
+@keyframes daemon-pulse-anim {
+    0%, 100% { opacity: 0.4; transform: scale(0.9); }
+    50% { opacity: 1; transform: scale(1.1); }
+}
+
+/* Empty state */
+.daemon-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--text-muted);
+    font-size: 14px;
+}

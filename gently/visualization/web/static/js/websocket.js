@@ -22,6 +22,11 @@ function connectWebSocket() {
         state.ws.send(JSON.stringify({type: 'get_embryos'}));
         state.ws.send(JSON.stringify({type: 'get_snapshots'}));
         state.ws.send(JSON.stringify({type: 'get_calibration'}));
+
+        // Re-subscribe daemon if tab is active
+        if (typeof DaemonTab !== 'undefined' && DaemonTab.active) {
+            state.ws.send(JSON.stringify({ type: 'subscribe_daemon' }));
+        }
     };
 
     state.ws.onclose = () => {
@@ -108,6 +113,11 @@ function handleMessage(msg) {
             }
         }
 
+        // Route daemon task events
+        if (typeof DaemonTab !== 'undefined' && msg.event_type === 'DAEMON_TASK_UPDATE') {
+            DaemonTab.handleDaemonTaskUpdate(msg.data);
+        }
+
         // Format CV events nicely for sidebar log
         let eventMsg;
         if (msg.event_type === 'CV_AGENT_THINKING') {
@@ -133,6 +143,14 @@ function handleMessage(msg) {
         // Server sending authoritative timelapse state on connect
         if (typeof EmbryosManager !== 'undefined') {
             EmbryosManager.reconcileWithServerState(msg.data);
+        }
+    } else if (msg.type === 'daemon_status') {
+        if (typeof DaemonTab !== 'undefined') {
+            DaemonTab.handleDaemonStatus(msg.data);
+        }
+    } else if (msg.type === 'daemon_tasks') {
+        if (typeof DaemonTab !== 'undefined') {
+            DaemonTab.handleDaemonTasks(msg.data);
         }
     } else if (msg.type === 'ping') {
         state.ws.send(JSON.stringify({type: 'pong'}));

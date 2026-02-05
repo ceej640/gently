@@ -94,6 +94,9 @@ class EventType(Enum):
     USER_INPUT = auto()
     USER_COMMAND = auto()
 
+    # Daemon events
+    DAEMON_TASK_UPDATE = auto()
+
 
 @dataclass
 class Event:

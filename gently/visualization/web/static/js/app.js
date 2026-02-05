@@ -59,6 +59,15 @@ function switchTab(tabName) {
     if (tabName === 'embryos' && typeof EmbryosManager !== 'undefined') {
         EmbryosManager.clearDetectionBadge();
     }
+
+    // Daemon tab lifecycle
+    if (typeof DaemonTab !== 'undefined') {
+        if (tabName === 'daemon') {
+            DaemonTab.activate();
+        } else {
+            DaemonTab.deactivate();
+        }
+    }
 }
 
 function logEvent(type, message) {
@@ -370,6 +379,7 @@ const KeyboardShortcuts = {
         '2': () => switchTab('events'),      // System
         '3': () => switchTab('main'),        // Live View
         '4': () => switchTab('calibration'), // Calibration
+        '5': () => switchTab('daemon'),      // Daemon
         'ArrowUp': () => KeyboardShortcuts.adjustZSlider(1),
         'ArrowDown': () => KeyboardShortcuts.adjustZSlider(-1),
         '?': () => KeyboardShortcuts.showHelp(),
@@ -425,6 +435,7 @@ const KeyboardShortcuts = {
                             <div class="shortcut"><kbd>2</kbd> System tab</div>
                             <div class="shortcut"><kbd>3</kbd> Live View tab</div>
                             <div class="shortcut"><kbd>4</kbd> Calibration tab</div>
+                            <div class="shortcut"><kbd>5</kbd> Daemon tab</div>
                         </div>
                         <div class="shortcut-group">
                             <h4>3D Volume</h4>
@@ -495,6 +506,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Initialize events tab
     initEventsTab();
+
+    // Initialize daemon tab
+    if (typeof DaemonTab !== 'undefined') {
+        DaemonTab.init();
+    }
 
     // Start WebSocket connection
     connectWebSocket();

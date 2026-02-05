@@ -6,6 +6,7 @@
     <title>Gently - Microscopy Visualization</title>
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
     <link rel="stylesheet" href="/static/css/main.css">
+    <link rel="stylesheet" href="/static/css/daemon.css">
 </head>
 <body>
     <div class="header">
@@ -71,6 +72,9 @@
         <div class="tab" data-tab="events">
             System
             <span class="tab-badge" id="events-count">0</span>
+        </div>
+        <div class="tab" data-tab="daemon">
+            Daemon <span class="daemon-pulse" id="daemon-pulse"></span>
         </div>
     </div>
 
@@ -254,6 +258,117 @@
         </div>
     </div>
 
+    <!-- Daemon Tab -->
+    <div id="daemon-content" class="tab-content">
+        <div class="daemon-container">
+            <!-- Status Bar -->
+            <div class="daemon-status-bar">
+                <div class="daemon-status-item">
+                    <span class="daemon-status-dot" id="daemon-alive-dot"></span>
+                    <span class="daemon-status-label">Daemon</span>
+                </div>
+                <div class="daemon-status-item">
+                    <span class="daemon-status-dot" id="daemon-scheduler-dot"></span>
+                    <span class="daemon-status-label">Scheduler</span>
+                </div>
+                <div class="daemon-status-item">
+                    <span class="daemon-status-label">Session:</span>
+                    <span class="daemon-status-value" id="daemon-session-id">-</span>
+                </div>
+                <div class="daemon-status-item">
+                    <span class="daemon-status-label">User:</span>
+                    <span class="daemon-status-value" id="daemon-user-present">-</span>
+                </div>
+                <div class="daemon-status-item" style="margin-left: auto;">
+                    <span class="daemon-status-label">Tasks run:</span>
+                    <span class="daemon-status-value" id="daemon-tasks-executed">0</span>
+                </div>
+            </div>
+
+            <!-- Top row: Gauge + Heartbeat -->
+            <div class="daemon-grid-top">
+                <div class="daemon-panel">
+                    <div class="daemon-panel-title">Arousal</div>
+                    <div class="gauge-container">
+                        <div class="gauge-canvas-wrap">
+                            <canvas id="arousal-gauge"></canvas>
+                        </div>
+                        <div class="gauge-stats">
+                            <div class="gauge-stat">
+                                <span class="gauge-stat-label">Pace</span>
+                                <span class="gauge-stat-value" id="gs-pace">-</span>
+                            </div>
+                            <div class="gauge-stat">
+                                <span class="gauge-stat-label">Momentum</span>
+                                <span class="gauge-stat-value" id="gs-momentum">-</span>
+                            </div>
+                            <div class="gauge-stat">
+                                <span class="gauge-stat-label">Avg 30s</span>
+                                <span class="gauge-stat-value" id="gs-avg30">-</span>
+                            </div>
+                            <div class="gauge-stat">
+                                <span class="gauge-stat-label">Triggers</span>
+                                <span class="gauge-stat-value" id="gs-triggers">-</span>
+                            </div>
+                            <div class="gauge-stat">
+                                <span class="gauge-stat-label">Next think</span>
+                                <span class="gauge-stat-value" id="gs-next">-</span>
+                            </div>
+                            <div class="gauge-stat">
+                                <span class="gauge-stat-label">Deep think</span>
+                                <span class="gauge-stat-value" id="gs-deep">-</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="daemon-panel">
+                    <div class="daemon-panel-title">Heartbeat Timeline</div>
+                    <div class="chart-container">
+                        <canvas id="heartbeat-chart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Middle row: Queue Depth + Category -->
+            <div class="daemon-grid-middle">
+                <div class="daemon-panel">
+                    <div class="daemon-panel-title">Queue Depth</div>
+                    <div class="chart-container">
+                        <canvas id="queue-depth-chart"></canvas>
+                    </div>
+                </div>
+                <div class="daemon-panel">
+                    <div class="daemon-panel-title">Category Breakdown</div>
+                    <div class="chart-container">
+                        <canvas id="category-chart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Bottom: Task Flow -->
+            <div class="daemon-panel daemon-task-flow">
+                <div class="daemon-panel-title">Task Flow</div>
+                <div class="task-flow-scroll" id="task-flow-scroll">
+                    <table class="task-flow-table">
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Type</th>
+                                <th>Cat</th>
+                                <th>Target</th>
+                                <th>Priority</th>
+                                <th>Status</th>
+                                <th>Reason</th>
+                            </tr>
+                        </thead>
+                        <tbody id="task-flow-tbody">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Lightbox Modal -->
     <div id="lightbox-overlay" class="lightbox-overlay">
         <div class="lightbox-container">
@@ -308,7 +423,10 @@
     <script src="/static/js/narrative.js"></script>
     <!-- Three.js for 3D volume viewer -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- Chart.js for daemon charts -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
     <script src="/static/js/projections.js"></script>
+    <script src="/static/js/daemon.js"></script>
     <script src="/static/js/app.js"></script>
 </body>
 </html>

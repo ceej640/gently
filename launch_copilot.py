@@ -404,6 +404,8 @@ async def main(offline: bool = False, full_offline: bool = False, resume_session
     daemon.set_user_present(True)
     copilot._daemon = daemon
     copilot._daemon_messages = daemon_messages
+    if hasattr(copilot, 'viz_server') and copilot.viz_server:
+        copilot.viz_server.set_daemon(daemon)
 
     console.print(f"  [{theme.muted}]Daemon: context.db[/]")
 

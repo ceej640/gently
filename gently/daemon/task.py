@@ -325,6 +325,11 @@ class TaskQueue:
             ],
         }
 
+    def recent(self, limit: int = 50) -> List[Task]:
+        """Last N tasks of any status, sorted by created_at desc."""
+        tasks = sorted(self._tasks.values(), key=lambda t: t.created_at, reverse=True)
+        return tasks[:limit]
+
     # ----------------------------------------------------------------
     # Manipulation
     # ----------------------------------------------------------------

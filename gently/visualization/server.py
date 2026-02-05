@@ -820,6 +820,11 @@ class VisualizationServer:
         if self.event_bus:
             self._subscribe_to_events()
 
+        # Daemon reference (set via set_daemon)
+        self._daemon_ref = None
+        self._daemon_subscribers: Set[WebSocket] = set()
+        self._daemon_status_task = None
+
         # Server instance
         self._server = None
         self._server_task = None
@@ -857,6 +862,49 @@ class VisualizationServer:
             except Exception as e:
                 logger.debug(f"GentlyStore projection path lookup failed: {e}")
         return None
+
+    def set_daemon(self, daemon):
+        """Store a reference to the daemon for status queries."""
+        self._daemon_ref = daemon
+
+    def _serialize_task(self, task) -> dict:
+        """Serialize a daemon Task dataclass to JSON-safe dict."""
+        return {
+            "id": task.id,
+            "type": task.type.value,
+            "category": task.category.value,
+            "status": task.status.value,
+            "priority": task.priority,
+            "target": task.target,
+            "reason": task.reason,
+            "parent_id": task.parent_id,
+            "created_at": task.created_at.isoformat(),
+            "started_at": task.started_at.isoformat() if task.started_at else None,
+            "completed_at": task.completed_at.isoformat() if task.completed_at else None,
+            "error": task.error,
+        }
+
+    async def _daemon_status_loop(self):
+        """Broadcast daemon status at 1Hz to subscribed clients only."""
+        while True:
+            try:
+                await asyncio.sleep(1.0)
+                if not self._daemon_ref or not self._daemon_subscribers:
+                    continue
+                status = self._daemon_ref.status()
+                msg = json.dumps({"type": "daemon_status", "data": status})
+                dead = []
+                for ws in list(self._daemon_subscribers):
+                    try:
+                        await ws.send_text(msg)
+                    except Exception:
+                        dead.append(ws)
+                for ws in dead:
+                    self._daemon_subscribers.discard(ws)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning(f"Daemon status loop error: {e}", exc_info=True)
 
     def _setup_routes(self):
         """Setup FastAPI routes"""
@@ -1089,6 +1137,21 @@ class VisualizationServer:
                 ],
                 "total": len(events)
             }
+
+        @self.app.get("/api/daemon/status")
+        async def get_daemon_status():
+            """Get daemon status"""
+            if not self._daemon_ref:
+                return {"error": "No daemon connected"}
+            return self._daemon_ref.status()
+
+        @self.app.get("/api/daemon/tasks")
+        async def get_daemon_tasks(limit: int = 50):
+            """Get recent daemon tasks"""
+            if not self._daemon_ref:
+                return {"tasks": []}
+            tasks = self._daemon_ref.queue.recent(limit=limit)
+            return {"tasks": [self._serialize_task(t) for t in tasks]}
 
         @self.app.get("/api/images/{uid}")
         async def get_image(uid: str):
@@ -1564,17 +1627,20 @@ class VisualizationServer:
                         await websocket.send_json({"type": "ping"})
 
             except WebSocketDisconnect:
+                self._daemon_subscribers.discard(websocket)
                 try:
                     await self.manager.disconnect(websocket)
                 except Exception:
                     pass
             except asyncio.CancelledError:
+                self._daemon_subscribers.discard(websocket)
                 try:
                     await self.manager.disconnect(websocket)
                 except Exception:
                     pass
             except Exception as e:
                 logger.error(f"WebSocket error: {e}")
+                self._daemon_subscribers.discard(websocket)
                 try:
                     await self.manager.disconnect(websocket)
                 except Exception:
@@ -1653,6 +1719,39 @@ class VisualizationServer:
             elif msg_type == "get_presence":
                 # Client requesting current presence list
                 await self.manager.broadcast_presence()
+
+            # Daemon tab subscribe/unsubscribe
+            elif msg_type == "subscribe_daemon":
+                self._daemon_subscribers.add(websocket)
+                # Send initial status + recent tasks
+                if self._daemon_ref:
+                    await websocket.send_json({
+                        "type": "daemon_status",
+                        "data": self._daemon_ref.status()
+                    })
+                    tasks = self._daemon_ref.queue.recent(limit=50)
+                    await websocket.send_json({
+                        "type": "daemon_tasks",
+                        "data": [self._serialize_task(t) for t in tasks]
+                    })
+
+            elif msg_type == "unsubscribe_daemon":
+                self._daemon_subscribers.discard(websocket)
+
+            elif msg_type == "get_daemon_status":
+                if self._daemon_ref:
+                    await websocket.send_json({
+                        "type": "daemon_status",
+                        "data": self._daemon_ref.status()
+                    })
+
+            elif msg_type == "get_daemon_tasks":
+                if self._daemon_ref:
+                    tasks = self._daemon_ref.queue.recent(limit=50)
+                    await websocket.send_json({
+                        "type": "daemon_tasks",
+                        "data": [self._serialize_task(t) for t in tasks]
+                    })
 
         except json.JSONDecodeError:
             logger.warning(f"Invalid JSON received: {message[:100]}")
@@ -2025,6 +2124,9 @@ class VisualizationServer:
         # Run server in background task
         self._server_task = asyncio.create_task(self._server.serve())
 
+        # Start daemon status broadcast loop
+        self._daemon_status_task = asyncio.create_task(self._daemon_status_loop())
+
         # Wait a moment for server to start
         await asyncio.sleep(0.5)
 
@@ -2032,6 +2134,13 @@ class VisualizationServer:
 
     async def stop(self):
         """Stop the visualization server"""
+        if self._daemon_status_task:
+            self._daemon_status_task.cancel()
+            try:
+                await self._daemon_status_task
+            except asyncio.CancelledError:
+                pass
+            self._daemon_status_task = None
         if self._server:
             self._server.should_exit = True
             if self._server_task:
