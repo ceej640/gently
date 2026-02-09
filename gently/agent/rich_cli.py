@@ -34,6 +34,7 @@ from prompt_toolkit.layout import Layout
 from prompt_toolkit.layout.containers import Window, HSplit
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.formatted_text import HTML
+from prompt_toolkit.patch_stdout import patch_stdout
 
 from .autocomplete import create_completer, create_auto_suggest
 from .theme import get_theme, set_theme, list_themes, Theme
@@ -294,7 +295,10 @@ class RichCopilotCLI:
 
         theme = get_theme()
         while messages:
-            msg = messages.pop(0)
+            try:
+                msg = messages.popleft()
+            except IndexError:
+                break  # Deque was drained by another consumer
             timestamp = msg.timestamp.strftime("%H:%M:%S")
 
             # Style by priority
@@ -314,6 +318,17 @@ class RichCopilotCLI:
                 box=box.SIMPLE,
             )
             self.console.print(panel)
+
+    async def _daemon_message_poller(self):
+        """Background task: drain daemon messages while the prompt is waiting.
+
+        Runs concurrently with prompt_async(). Because the main loop is
+        wrapped in patch_stdout(), Rich console output is redirected above
+        the active prompt line — so messages appear without disrupting input.
+        """
+        while self._running:
+            await asyncio.sleep(0.3)
+            self._display_daemon_messages()
 
     def print_tool_call(self, tool_name: str, tool_input: Dict[str, Any], duration: Optional[float] = None):
         """Print tool call information"""
@@ -1429,10 +1444,11 @@ class RichCopilotCLI:
 
     async def stream_copilot_response(self, message: str):
         """
-        Handle message with streaming response display.
+        Handle message with streaming response display using Rich Live.
 
-        Text is printed in segments - before each tool call and after all tools complete.
-        This provides better UX than waiting for everything to finish.
+        Text appears progressively as chunks arrive, with a block cursor
+        indicating the stream is active. Tool calls show a transient spinner
+        that disappears when the tool completes.
 
         Parameters
         ----------
@@ -1445,35 +1461,38 @@ class RichCopilotCLI:
         response_text = ""
         segment_count = 0
 
-        def flush_text_segment():
-            """Print accumulated text as a panel and reset"""
+        def make_response_panel(text: str, streaming: bool = False) -> Panel:
+            """Build the copilot response panel, optionally with a streaming cursor."""
+            display_text = text + (" \u2588" if streaming else "")
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            return Panel(
+                Text(display_text) if streaming else Markdown(display_text),
+                title=f"[{theme.muted}]{timestamp}[/] [{theme.copilot} bold]{theme.icon_copilot}[/]",
+                title_align="left",
+                border_style=theme.copilot,
+                box=box.ROUNDED,
+            )
+
+        def flush_text(live: Live):
+            """Finalize the current text segment with Markdown rendering."""
             nonlocal response_text, segment_count
             if response_text.strip():
-                timestamp = datetime.now().strftime("%H:%M:%S")
-                panel = Panel(
-                    Markdown(response_text),
-                    title=f"[{theme.muted}]{timestamp}[/] [{theme.copilot} bold]{theme.icon_copilot}[/]",
-                    title_align="left",
-                    border_style=theme.copilot,
-                    box=box.ROUNDED,
-                )
-                self.console.print(panel)
+                live.update(make_response_panel(response_text, streaming=False))
                 segment_count += 1
-                response_text = ""
+            response_text = ""
 
-        # Get the stream iterator so we can manage Progress context and asend() separately
+        # Get the stream iterator so we can manage Live context and asend() separately
         stream_iter = self.copilot.handle_message_stream(message).__aiter__()
         pending_choice_result = None  # Result to send back via asend()
 
         while True:
-            # Use Progress context for normal streaming, exit it for interactive UI
-            progress = Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                transient=True,
+            live = Live(
+                make_response_panel("", streaming=True),
+                console=self.console,
+                refresh_per_second=8,
+                transient=False,
             )
-            progress.start()
-            task = progress.add_task("[cyan]Thinking...", total=None)
+            live.start()
 
             try:
                 while True:
@@ -1485,19 +1504,18 @@ class RichCopilotCLI:
                         else:
                             chunk = await stream_iter.__anext__()
                     except StopAsyncIteration:
-                        progress.stop()
-                        flush_text_segment()
+                        flush_text(live)
+                        live.stop()
                         return  # Done with stream
 
                     if chunk.get('type') == 'text':
                         response_text += chunk.get('text', '')
-                        progress.update(task, description=f"[cyan]Copilot is responding...")
+                        live.update(make_response_panel(response_text, streaming=True))
                     elif chunk.get('type') == 'choice_request':
-                        # COMPLETELY stop Progress before running interactive picker
-                        progress.stop()
-                        flush_text_segment()
+                        flush_text(live)
+                        live.stop()
 
-                        # Run the interactive picker OUTSIDE the Progress context
+                        # Run the interactive picker OUTSIDE the Live context
                         choice_data = chunk.get('choice_data', {})
                         user_selection = await self.interactive_choice_picker(choice_data)
                         pending_choice_result = user_selection
@@ -1507,8 +1525,8 @@ class RichCopilotCLI:
                         tool_name = chunk.get('tool_name', 'unknown')
 
                         # Flush any accumulated text BEFORE showing tool
-                        progress.stop()
-                        flush_text_segment()
+                        flush_text(live)
+                        live.stop()
 
                         # Skip tool panel for ask_user_choice - the interactive picker handles UI
                         if tool_name != 'ask_user_choice':
@@ -1517,34 +1535,34 @@ class RichCopilotCLI:
                                 chunk.get('tool_input', {}),
                                 None  # No duration yet - tool is starting
                             )
-                        # Reset progress to show tool is running
-                        progress = Progress(
-                            SpinnerColumn(),
-                            TextColumn("[progress.description]{task.description}"),
+
+                        # Show spinner for tool execution (transient — disappears when done)
+                        live = Live(
+                            Text(f"  {theme.icon_tool} Running {tool_name}...", style=theme.tool),
+                            console=self.console,
+                            refresh_per_second=4,
                             transient=True,
                         )
-                        progress.start()
-                        task = progress.add_task(f"[cyan]Running {tool_name}...", total=None)
+                        live.start()
+                        response_text = ""
                     elif chunk.get('type') == 'tool_call':
-                        # Tool finished - update progress description with duration
-                        tool_name = chunk.get('tool_name', 'unknown')
+                        # Tool finished
+                        live.stop()
                         duration = chunk.get('duration')
-
-                        progress.stop()
-                        # Print duration if we want to show it
                         if duration:
                             self.console.print(f"   [dim]{duration:.2f}s[/dim]")
 
-                        # Reset progress for next operation
-                        progress = Progress(
-                            SpinnerColumn(),
-                            TextColumn("[progress.description]{task.description}"),
-                            transient=True,
+                        # New Live for the next text segment
+                        live = Live(
+                            make_response_panel("", streaming=True),
+                            console=self.console,
+                            refresh_per_second=8,
+                            transient=False,
                         )
-                        progress.start()
-                        task = progress.add_task("[cyan]Thinking...", total=None)
+                        live.start()
+                        response_text = ""
             finally:
-                progress.stop()
+                live.stop()
 
     async def handle_slash_command(self, command: str) -> Optional[bool]:
         """
@@ -2111,6 +2129,62 @@ class RichCopilotCLI:
 
             return False  # Handled, continue loop
 
+        elif cmd == '/ingest' or cmd.startswith('/ingest '):
+            # Ingest external knowledge
+            theme = get_theme()
+            daemon = getattr(self.copilot, '_daemon', None)
+
+            if not daemon:
+                self.console.print(f"[{theme.muted}]Daemon not running[/]")
+                return False
+
+            if not daemon.capabilities or not daemon.capabilities.ingestion.available:
+                self.console.print(f"[{theme.warning}]Ingestion requires Claude API (not available in offline mode)[/]")
+                return False
+
+            parts = command.strip().split(maxsplit=1)
+            if len(parts) < 2 or not parts[1].strip():
+                self.console.print(f"[{theme.warning}]Usage: /ingest <url, file path, or text>[/]")
+                return False
+
+            source = parts[1].strip()
+            self.console.print(f"[{theme.muted}]Ingesting: {source}...[/]")
+
+            try:
+                ingestion = daemon.capabilities.ingestion
+                if source.startswith(("http://", "https://")):
+                    result = await ingestion.ingest_url(source)
+                elif source.lower().endswith(".pdf") or '\\' in source or '/' in source:
+                    # Looks like a file path
+                    from pathlib import Path
+                    if Path(source).exists():
+                        result = await ingestion.ingest_pdf(source)
+                    else:
+                        self.console.print(f"[{theme.error}]File not found: {source}[/]")
+                        return False
+                else:
+                    result = await ingestion.ingest_text(source, source="user input")
+
+                self.console.print(f"[{theme.success}]Ingested: {result.summary}[/]")
+                self.console.print(f"  [{theme.muted}]{result.entry_count} context entries extracted[/]")
+
+                # Apply results to context store
+                from gently.daemon.onboarding import apply_ingestion_to_context
+                entries = apply_ingestion_to_context(result, daemon.context_store)
+                if entries > 0:
+                    self.console.print(f"  [{theme.success}]{entries} entries written to context store[/]")
+
+                if result.campaign_proposal:
+                    self.console.print(
+                        f"  [{theme.info}]Campaign proposed: "
+                        f"{result.campaign_proposal.get('description', 'see details')}[/]"
+                    )
+
+            except Exception as e:
+                self.console.print(f"[{theme.error}]Ingestion failed: {e}[/]")
+
+            return False  # Handled, continue loop
+
         elif cmd == '/timelapse' or cmd == '/timelapse watch':
             # Show timelapse status (with optional live watch mode)
             watch_mode = 'watch' in cmd
@@ -2418,71 +2492,81 @@ class RichCopilotCLI:
             ))
             self.console.print()
 
+        # Start background poller for daemon messages
+        poller_task = asyncio.create_task(self._daemon_message_poller())
+
         try:
-            while self._running:
-                try:
-                    # Display any queued daemon messages
-                    self._display_daemon_messages()
+            # patch_stdout redirects console output above the active prompt
+            # line, so daemon messages can appear without disrupting input.
+            # Works because self.console was created without an explicit
+            # file= argument, so it re-resolves sys.stdout on each write.
+            with patch_stdout():
+                while self._running:
+                    try:
+                        # Get user input with autocomplete
+                        theme = get_theme()
+                        user_input = await self.session.prompt_async(
+                            [(f"bold {theme.user}", '> ')],
+                        )
 
-                    # Get user input with autocomplete
-                    theme = get_theme()
-                    user_input = await self.session.prompt_async(
-                        [(f"bold {theme.user}", '> ')],
-                    )
-
-                    if not user_input.strip():
-                        continue
-
-                    # Clear the input line to avoid double display
-                    self.console.print()
-
-                    # Notify daemon of user activity
-                    get_event_bus().publish(EventType.USER_INPUT, {"message": user_input.strip()}, source="cli")
-
-                    # Handle slash commands
-                    if user_input.startswith('/'):
-                        result = await self.handle_slash_command(user_input)
-                        if result is True:  # Quit command
-                            break
-                        elif result is False:  # Handled, continue loop
+                        if not user_input.strip():
                             continue
-                        # result is None means not recognized, fall through to copilot
 
-                    # Check if thinking mode will be triggered
-                    if self.copilot._should_use_thinking(user_input):
-                        self.console.print(f"[{theme.info}]💭 Extended thinking enabled[/]")
+                        # Clear the input line to avoid double display
+                        self.console.print()
 
-                    # Stream copilot response
-                    try:
-                        await self.stream_copilot_response(user_input)
-                    except Exception as e:
-                        self.print_error(f"Error processing message: {e}")
-                        import traceback
-                        self.console.print(traceback.format_exc(), style=theme.error)
+                        # Notify daemon of user activity
+                        get_event_bus().publish(EventType.USER_INPUT, {"message": user_input.strip()}, source="cli")
 
-                    self.console.print()  # Add spacing
+                        # Handle slash commands
+                        if user_input.startswith('/'):
+                            result = await self.handle_slash_command(user_input)
+                            if result is True:  # Quit command
+                                break
+                            elif result is False:  # Handled, continue loop
+                                continue
+                            # result is None means not recognized, fall through to copilot
 
-                except KeyboardInterrupt:
-                    self.console.print()
-                    try:
-                        confirm = await self.session.prompt_async("Exit? (y/n): ")
-                        if confirm.lower().startswith('y'):
+                        # Check if thinking mode will be triggered
+                        if self.copilot._should_use_thinking(user_input):
+                            self.console.print(f"[{theme.info}]💭 Extended thinking enabled[/]")
+
+                        # Stream copilot response
+                        try:
+                            await self.stream_copilot_response(user_input)
+                        except Exception as e:
+                            self.print_error(f"Error processing message: {e}")
+                            import traceback
+                            self.console.print(traceback.format_exc(), style=theme.error)
+
+                        self.console.print()  # Add spacing
+
+                    except KeyboardInterrupt:
+                        self.console.print()
+                        try:
+                            confirm = await self.session.prompt_async("Exit? (y/n): ")
+                            if confirm.lower().startswith('y'):
+                                break
+                        except (KeyboardInterrupt, EOFError):
                             break
-                    except (KeyboardInterrupt, EOFError):
+
+                    except EOFError:
                         break
 
-                except EOFError:
-                    break
-
-                except Exception as e:
-                    self.print_error(f"Unexpected error: {e}")
-                    import traceback
-                    theme = get_theme()
-                    self.console.print(traceback.format_exc(), style=theme.error)
-                    self.console.print()
-                    # Continue loop instead of breaking
+                    except Exception as e:
+                        self.print_error(f"Unexpected error: {e}")
+                        import traceback
+                        theme = get_theme()
+                        self.console.print(traceback.format_exc(), style=theme.error)
+                        self.console.print()
+                        # Continue loop instead of breaking
 
         finally:
+            poller_task.cancel()
+            try:
+                await poller_task
+            except asyncio.CancelledError:
+                pass
             self._running = False
             theme = get_theme()
             self.console.print()

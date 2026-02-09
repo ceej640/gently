@@ -16,6 +16,7 @@ Usage:
 import asyncio
 import os
 import argparse
+from collections import deque
 from pathlib import Path
 from datetime import datetime
 
@@ -383,17 +384,19 @@ async def main(offline: bool = False, full_offline: bool = False, resume_session
     from gently.capabilities import Capabilities
     from gently.agent_core.reasoning import create_think_function
     from gently.daemon import Daemon
-
+    from gently.context.gap_assessment import assess_gaps
     context_store = ContextStore(storage_dir / "context.db")
-    daemon_messages = []
+    daemon_messages = deque()
 
     def message_handler(message):
         daemon_messages.append(message)
 
+    claude_for_capabilities = copilot.claude if not full_offline else None
     capabilities = Capabilities(
         device_client=client,
         perception_manager=copilot.perception_manager,
         message_handler=message_handler,
+        claude_client=claude_for_capabilities,
     )
     think_fn = await create_think_function(copilot.claude if not full_offline else None)
     daemon = Daemon(
@@ -407,7 +410,27 @@ async def main(offline: bool = False, full_offline: bool = False, resume_session
     if hasattr(copilot, 'viz_server') and copilot.viz_server:
         copilot.viz_server.set_daemon(daemon)
 
-    console.print(f"  [{theme.muted}]Daemon: context.db[/]")
+    # Cold start: assess context gaps and surface onboarding directly.
+    # We pre-populate daemon_messages for immediate CLI display rather than
+    # injecting SURFACE tasks (which would duplicate messages when the
+    # scheduler executes them through InteractionCapability.speak()).
+    gap_report = assess_gaps(context_store)
+    if gap_report.conversation_weight != "none":
+        console.print(
+            f"  [{theme.muted}]Daemon: context.db "
+            f"({gap_report.conversation_weight} onboarding, "
+            f"readiness={gap_report.readiness:.0%})[/]"
+        )
+
+        from gently.daemon.onboarding import get_onboarding_messages
+        from gently.capabilities.interaction import Message
+        for msg_text in get_onboarding_messages(gap_report, copilot.session_id):
+            daemon_messages.append(Message(content=msg_text, priority="high"))
+    else:
+        console.print(
+            f"  [{theme.muted}]Daemon: context.db "
+            f"(ready, readiness={gap_report.readiness:.0%})[/]"
+        )
 
     # Run CLI with daemon
     daemon_task = asyncio.create_task(daemon.start())
