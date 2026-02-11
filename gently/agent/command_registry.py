@@ -565,6 +565,15 @@ Requires microscope connection and at least one registered embryo.""",
         category=CommandCategory.DAEMON,
     ))
 
+    registry.register(CommandDefinition(
+        name="/ingest",
+        description="Ingest a paper, protocol, or URL",
+        help_text="Ingest external knowledge into the daemon's context.\n\nExamples:\n  /ingest https://doi.org/10.xxxx/paper\n  /ingest C:\\lab\\protocols\\protocol.pdf\n  /ingest We study early C. elegans embryogenesis under temperature stress",
+        positional_arg="source",
+        positional_hint="url, file path, or text",
+        category=CommandCategory.DAEMON,
+    ))
+
 
 # ============================================================================
 # Global Registry

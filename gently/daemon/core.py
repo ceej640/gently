@@ -387,7 +387,9 @@ class Daemon:
         self.clock.add_trigger(trigger, data)
 
     def set_user_present(self, present: bool):
-        """Update user presence."""
+        """Update user presence on daemon and capabilities."""
         self.user_present = present
+        if self.capabilities:
+            self.capabilities.set_user_present(present)
         if present:
             self.clock.raise_arousal(0.3, "user arrived")

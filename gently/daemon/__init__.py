@@ -9,6 +9,7 @@ by arousal level. It:
 - Adapts its pace based on what's happening
 - Escalates from quick scans to deep thinking when needed
 - Monitors expectations for approaching/expired deadlines
+- Bootstraps its context via gap assessment and onboarding (cold start doctrine)
 
 Key components:
 - Clock: When and how to think (arousal, pacing, escalation)
@@ -16,6 +17,7 @@ Key components:
 - Task: Typed tasks and priority queue
 - Scheduler: Task-driven heartbeat (cognitive/physical/interaction dispatch)
 - Daemon: Lifecycle, event handling, expectation monitoring
+- Onboarding: Cold start conversation logic and context seeding
 - Runner: Entry point, startup
 """
 
@@ -44,6 +46,7 @@ from .task import (
 )
 from .scheduler import Scheduler
 from .core import Daemon, ExpectationMonitor
+from .onboarding import generate_onboarding_tasks, apply_ingestion_to_context
 
 __all__ = [
     # Clock
@@ -74,4 +77,7 @@ __all__ = [
     # Daemon
     "Daemon",
     "ExpectationMonitor",
+    # Onboarding
+    "generate_onboarding_tasks",
+    "apply_ingestion_to_context",
 ]

@@ -82,6 +82,20 @@ _ACTION_TO_TASK_TYPE = {
     "surface": TaskType.SURFACE,
     "ask": TaskType.ASK,
     "notify": TaskType.NOTIFY,
+    # Aliases the LLM sometimes uses
+    "perceive": TaskType.OBSERVE,
+    "classify": TaskType.OBSERVE,
+    "check": TaskType.OBSERVE,
+    "scan": TaskType.OBSERVE,
+    "look": TaskType.OBSERVE,
+    "ingest": TaskType.OBSERVE,
+}
+
+# Action types that are not real actions — the LLM sometimes puts context
+# updates or meta-instructions in the <actions> section. Silently ignore.
+_IGNORED_ACTION_TYPES = {
+    "update_context", "update", "context_update",
+    "none", "wait", "pass", "skip",
 }
 
 
@@ -378,10 +392,18 @@ class Scheduler:
         """Convert LLM-output actions into typed tasks."""
         tasks = []
         for action in actions:
-            action_type = action.get("type", "")
+            raw_type = action.get("type", "")
+            # Normalize: lowercase, strip quotes, commas, whitespace
+            action_type = raw_type.strip().strip('"\'').rstrip(",").lower()
+
+            # Skip non-actions the LLM sometimes emits
+            if action_type in _IGNORED_ACTION_TYPES:
+                logger.debug(f"Ignoring non-action '{raw_type}' from LLM output")
+                continue
+
             task_type = _ACTION_TO_TASK_TYPE.get(action_type)
             if not task_type:
-                logger.warning(f"Unknown action type '{action_type}', skipping")
+                logger.warning(f"Unknown action type '{raw_type}' (normalized: '{action_type}'), skipping")
                 continue
 
             params = action.get("params", {})
