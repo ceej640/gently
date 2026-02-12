@@ -1524,7 +1524,6 @@ Write a brief status summary. Examples:
         context = {
             'copilot': self,
             'client': getattr(self, 'client', None),
-            'databroker': getattr(self, 'databroker', None),
         }
 
         # Execute via registry

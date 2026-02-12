@@ -11,7 +11,7 @@ Plans included:
 - center_and_verify_embryo_plan: Stage movement and verification
 - calibrate_single_embryo_in_session_plan: Per-embryo calibration wrapper
 
-All plans use databroker as primary storage with JSON export at completion.
+All plans export calibration data to JSON at completion.
 """
 
 import numpy as np
@@ -26,7 +26,6 @@ from bluesky.preprocessors import finalize_wrapper, run_wrapper
 from .calibration_plans import calibrate_embryo_piezo_galvo
 from .visualization import mark_embryos_napari
 from .database import (
-    export_multi_embryo_database,
     add_embryo_to_database,
     save_multi_embryo_database
 )
@@ -177,7 +176,7 @@ def calibrate_single_embryo_in_session_plan(
     calibration_params: Optional[Dict] = None
 ):
     """
-    Calibrate single embryo and store results in databroker.
+    Calibrate single embryo and store results.
 
     Wrapper around calibrate_embryo_piezo_galvo() that adds session-level
     metadata and updates embryo data with calibration results.
@@ -279,7 +278,7 @@ def multi_embryo_calibration_session_plan(
        a. Center stage on embryo
        b. Verify centering with bottom camera
        c. Run complete piezo-galvo calibration
-       d. Store results in databroker
+       d. Store results
     4. Export all results to JSON database file
 
     Parameters
@@ -315,13 +314,10 @@ def multi_embryo_calibration_session_plan(
     Examples
     --------
     >>> from bluesky import RunEngine
-    >>> from databroker import Broker
     >>> from gently.devices import DiSPIMBottomCamera, DiSPIMXYStage, ...
     >>> from gently.multi_embryo_plans import multi_embryo_calibration_session_plan
     >>>
     >>> RE = RunEngine({})
-    >>> db = Broker.named('temp')
-    >>> RE.subscribe(db.insert)
     >>>
     >>> # Create devices
     >>> bottom_camera = DiSPIMBottomCamera(...)

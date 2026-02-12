@@ -1,14 +1,10 @@
 #!/usr/bin/env python3
 """
-Database Export Utilities for Multi-Embryo Calibration
-======================================================
+Database Utilities for Multi-Embryo Calibration
+================================================
 
-This module provides utilities for exporting Bluesky databroker runs
-to JSON database format compatible with the original multi_embryo_database.json structure.
-
-The databroker serves as the primary storage during acquisition, and these
-utilities enable exporting to JSON format for compatibility with existing
-analysis tools and workflows.
+Utilities for managing multi-embryo calibration data in JSON format,
+compatible with the original multi_embryo_database.json structure.
 """
 
 import json
@@ -67,7 +63,7 @@ def numpy_to_python(obj: Any) -> Any:
 
 def format_embryo_calibration_for_json(calibration_data: Dict) -> Dict:
     """
-    Format embryo calibration data from databroker for JSON export.
+    Format embryo calibration data for JSON export.
 
     Converts numpy types to Python native types and ensures consistent
     structure with the original multi_embryo_database.json format.
@@ -75,7 +71,7 @@ def format_embryo_calibration_for_json(calibration_data: Dict) -> Dict:
     Parameters
     ----------
     calibration_data : dict
-        Calibration data from databroker run metadata
+        Calibration data dictionary
 
     Returns
     -------
@@ -116,12 +112,12 @@ def format_embryo_calibration_for_json(calibration_data: Dict) -> Dict:
 
 def format_embryo_entry_for_json(embryo_data: Dict) -> Dict:
     """
-    Format single embryo entry from databroker for JSON export.
+    Format single embryo entry for JSON export.
 
     Parameters
     ----------
     embryo_data : dict
-        Embryo data from databroker run metadata
+        Embryo data dictionary
 
     Returns
     -------
@@ -150,108 +146,6 @@ def format_embryo_entry_for_json(embryo_data: Dict) -> Dict:
         entry['calibration'] = format_embryo_calibration_for_json(embryo_data['calibration'])
 
     return entry
-
-
-def export_multi_embryo_database(
-    databroker_catalog,
-    session_uid: str,
-    output_path: Path,
-    pretty_print: bool = True
-) -> Path:
-    """
-    Export multi-embryo calibration data from databroker to JSON database file.
-
-    Queries databroker for all runs associated with a session UID and exports
-    them to the multi_embryo_database.json format.
-
-    Parameters
-    ----------
-    databroker_catalog
-        Databroker catalog instance
-    session_uid : str
-        Session run UID (top-level multi-embryo run)
-    output_path : Path
-        Output path for JSON file
-    pretty_print : bool, optional
-        Pretty-print JSON with indentation (default: True)
-
-    Returns
-    -------
-    Path
-        Path to exported JSON file
-
-    Raises
-    ------
-    KeyError
-        If session UID not found in databroker
-    ValueError
-        If session data is incomplete or invalid
-    """
-    # Get session run from databroker
-    try:
-        session_run = databroker_catalog[session_uid]
-    except KeyError:
-        raise KeyError(f"Session UID {session_uid} not found in databroker")
-
-    # Handle different databroker API versions
-    try:
-        # v2 API
-        session_metadata = session_run.metadata['start']
-    except (AttributeError, KeyError):
-        # v1 API
-        session_metadata = session_run['start']
-
-    # Initialize database structure
-    database = {
-        'created': session_metadata.get('time', format_timestamp()),
-        'embryos': {},
-        'last_updated': format_timestamp()
-    }
-
-    # Get list of embryo run UIDs from session metadata
-    embryo_uids = session_metadata.get('embryo_runs', [])
-
-    if not embryo_uids:
-        print(f"Warning: No embryo runs found in session {session_uid[:8]}...")
-        print(f"  Session may still be running or no embryos were calibrated.")
-
-    # Process each embryo run
-    for embryo_uid in embryo_uids:
-        try:
-            embryo_run = databroker_catalog[embryo_uid]
-
-            # Get embryo metadata
-            try:
-                embryo_metadata = embryo_run.metadata['start']
-            except (AttributeError, KeyError):
-                embryo_metadata = embryo_run['start']
-
-            embryo_id = embryo_metadata.get('embryo_id', f"embryo_{len(database['embryos'])+1:03d}")
-
-            # Format embryo entry
-            embryo_entry = format_embryo_entry_for_json(embryo_metadata)
-
-            # Add to database
-            database['embryos'][embryo_id] = embryo_entry
-
-        except Exception as e:
-            print(f"Warning: Could not export embryo {embryo_uid[:8]}...: {e}")
-            continue
-
-    # Write to JSON file
-    output_path = Path(output_path)
-    with open(output_path, 'w') as f:
-        if pretty_print:
-            json.dump(database, f, indent=2)
-        else:
-            json.dump(database, f)
-
-    print(f"\n✓ Exported multi-embryo database:")
-    print(f"  File: {output_path}")
-    print(f"  Embryos: {len(database['embryos'])}")
-    print(f"  Session UID: {session_uid[:8]}...")
-
-    return output_path
 
 
 def load_multi_embryo_database(database_path: Path) -> Dict:

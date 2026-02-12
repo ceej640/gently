@@ -58,7 +58,7 @@ def read_stage_plan(xy_stage) -> Generator[Any, Any, None]:
     ------------------------------
     >>> plan = BPlan("read_stage_plan", xy_stage="xy_stage")
     >>> rm.item_add(plan)
-    >>> # After completion, retrieve from databroker:
+    >>> # After completion, retrieve data:
     >>> run = db[-1]
     >>> pos = run.primary.read()['xy_stage'].values[0]
     """
@@ -81,7 +81,7 @@ def read_piezo_plan(piezo) -> Generator[Any, Any, None]:
     ------------------------------
     >>> plan = BPlan("read_piezo_plan", piezo="piezo")
     >>> rm.item_add(plan)
-    >>> # After completion, retrieve from databroker:
+    >>> # After completion, retrieve data:
     >>> run = db[-1]
     >>> pos = run.primary.read()['piezo'].values[0]
     """
@@ -105,7 +105,7 @@ def capture_bottom_image_plan(bottom_camera, led=None) -> Generator[Any, Any, No
     ------------------------------
     >>> plan = BPlan("capture_bottom_image_plan", bottom_camera="bottom_camera", led="led")
     >>> rm.item_add(plan)
-    >>> # After completion, retrieve image from databroker:
+    >>> # After completion, retrieve image:
     >>> run = db[-1]
     >>> image = run.primary.read()['bottom_camera'].values[0]
     """

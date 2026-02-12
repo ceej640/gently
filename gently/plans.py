@@ -222,7 +222,7 @@ def get_stage_position_plan(xy_stage):
 
     This is a plan stub that yields Bluesky messages to read the stage position.
     Use this instead of direct device access within plans to maintain proper
-    message flow and enable databroker integration.
+    message flow and enable data recording.
 
     Parameters
     ----------

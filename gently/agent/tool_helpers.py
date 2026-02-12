@@ -128,23 +128,6 @@ def require_timelapse_orchestrator(copilot) -> Tuple[Optional[Any], Optional[str
     return copilot.timelapse_orchestrator, None
 
 
-def require_databroker(copilot) -> Tuple[Optional[Any], Optional[str]]:
-    """
-    Get databroker connection or return error message
-
-    Parameters
-    ----------
-    copilot : MicroscopyCopilot
-        Copilot instance
-
-    Returns
-    -------
-    tuple
-        (databroker, None) if available, (None, error_message) if not
-    """
-    if not hasattr(copilot, 'databroker') or copilot.databroker is None:
-        return None, "No databroker connection. Data persistence not available."
-    return copilot.databroker, None
 
 
 def get_timestamp_string() -> str:

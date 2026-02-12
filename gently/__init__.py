@@ -130,7 +130,6 @@ from .gently import Gently, create_gently
 # Core infrastructure
 from .core import (
     TiledStore,
-    DatabrokerStore,
     EventBus,
     EventType,
     get_event_bus,
@@ -145,7 +144,6 @@ __all__ = [
 
     # Core infrastructure
     "TiledStore",
-    "DatabrokerStore",
     "EventBus",
     "EventType",
     "get_event_bus",

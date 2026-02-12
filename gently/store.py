@@ -4,7 +4,7 @@ GentlyStore — Unified data storage for Gently.
 One class, one SQLite database, one directory tree under a single root.
 
 Replaces:
-    - TiledStore / DatabrokerStore  (UID-based file store + index.json)
+    - TiledStore  (UID-based file store + index.json)
     - ImageManager                  (volume TIFF writing + in-memory index)
     - SessionManager                (session JSON persistence)
     - TracePersister                (dual JSON + SQLite trace persistence)

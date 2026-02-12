@@ -2,7 +2,7 @@
 Gently - Main Entry Point
 
 This is the unified entry point that integrates all system components:
-- Core Infrastructure (DataStore, EventBus, Service)
+- Core Infrastructure (TiledStore, EventBus, Service)
 - Session Management
 - Analysis Pipelines
 - Tool Registry
@@ -38,7 +38,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .core import (
-    DatabrokerStore,
     TiledStore,
     EventBus,
     EventType,
@@ -79,7 +78,6 @@ class Gently:
         self,
         storage_path: Path = Path("D:/Gently"),
         catalog_name: str = "gently",
-        use_persistent_storage: bool = True,
     ):
         """
         Initialize the Gently system
@@ -89,22 +87,16 @@ class Gently:
         storage_path : Path
             Base path for all data storage (default: D:/Gently)
         catalog_name : str
-            Databroker/Tiled catalog name
-        use_persistent_storage : bool
-            If True, use TiledStore for persistent storage on disk
-            If False, use in-memory DatabrokerStore
+            Tiled catalog name
         """
         self.storage_path = Path(storage_path)
         self.storage_path.mkdir(parents=True, exist_ok=True)
 
-        # Initialize data store with persistent storage
-        if use_persistent_storage:
-            self._data_store = TiledStore(
-                storage_path=str(self.storage_path),
-                catalog_name=catalog_name,
-            )
-        else:
-            self._data_store = DatabrokerStore(catalog_name=catalog_name)
+        # Initialize data store
+        self._data_store = TiledStore(
+            storage_path=str(self.storage_path),
+            catalog_name=catalog_name,
+        )
 
         self._event_bus = get_event_bus()
         self._services = get_service_registry()
@@ -172,7 +164,7 @@ class Gently:
     # =========================================================================
 
     @property
-    def data_store(self) -> DatabrokerStore:
+    def data_store(self) -> TiledStore:
         """Access the UID-based data store"""
         return self._data_store
 

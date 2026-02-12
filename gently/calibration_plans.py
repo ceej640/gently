@@ -313,7 +313,7 @@ def detect_embryo_edge(embryo_detector, direction='top',
 
         all_results.append(result)
 
-        # Log to databroker
+        # Log data
         yield from bps.create()
         yield from bps.read(embryo_detector)
         yield from bps.save()
@@ -550,7 +550,7 @@ def calibrate_focus_at_position(camera, galvo, piezo, focus_scorer, core,
         all_positions.append(pos)
         all_scores.append(score)
 
-        # Log to databroker
+        # Log data
         yield from bps.create()
         yield from bps.read(focus_scorer)
         yield from bps.save()
@@ -630,7 +630,7 @@ def calibrate_embryo_piezo_galvo(
     8. Save calibration file
 
     This replaces the standalone calibrate_embryo_piezo_galvo.py script
-    with a proper Bluesky plan that captures all data in databroker.
+    with a proper Bluesky plan that captures all data.
 
     Parameters
     ----------
@@ -674,7 +674,7 @@ def calibrate_embryo_piezo_galvo(
     Returns
     -------
     dict
-        Calibration result (also stored in device for databroker access)
+        Calibration result
 
     Examples
     --------
@@ -702,7 +702,7 @@ def calibrate_embryo_piezo_galvo(
     # Overall metadata
     # Note: This orchestration plan does NOT create its own run.
     # Each sub-plan (verify_embryo_centered, detect_embryo_edge, calibrate_focus_at_position)
-    # creates its own run in databroker. This allows each phase to be queried independently
+    # creates its own run. This allows each phase to be queried independently
     # and avoids nested run issues.
 
     try:
@@ -941,7 +941,7 @@ def calibrate_embryo_piezo_galvo(
             print(f"\nNext step:")
             print(f"  python test_embryo_bluesky_plan.py --tolerance 1.5")
 
-        # Store result for databroker access
+        # Store result
         result = {
             'success': True,
             'calibration': calibration,
