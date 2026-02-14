@@ -25,8 +25,8 @@ Usage:
     # Start a session
     await gently.start_session(name="My Experiment")
 
-    # Connect to microscope
-    await gently.connect_microscope(host="localhost", port=18861)
+    # Get copilot with a backend
+    copilot = gently.get_copilot(backend=my_backend)
 
     # Run analysis pipeline
     result = await gently.analyze(volume, pipeline="embryo_detection")
@@ -43,8 +43,6 @@ from .core import (
     EventBus,
     EventType,
     ServiceRegistry,
-    ServiceClient,
-    ServiceInfo,
     get_data_store,
     get_event_bus,
     get_service_registry,
@@ -77,7 +75,7 @@ class Gently:
 
     def __init__(
         self,
-        storage_path: Path = Path("D:/Gently"),
+        storage_path: Path = Path("./experiment_data"),
         catalog_name: str = "gently",
         use_persistent_storage: bool = True,
     ):
@@ -87,7 +85,7 @@ class Gently:
         Parameters
         ----------
         storage_path : Path
-            Base path for all data storage (default: D:/Gently)
+            Base path for all data storage
         catalog_name : str
             Databroker/Tiled catalog name
         use_persistent_storage : bool
@@ -108,7 +106,6 @@ class Gently:
 
         self._event_bus = get_event_bus()
         self._services = get_service_registry()
-        self._client = ServiceClient(self._services)
 
         # Initialize session manager
         self._sessions = SessionManager(
@@ -132,40 +129,7 @@ class Gently:
         # Visualization server (lazy loaded)
         self._viz_server = None
 
-        # Register standard services
-        self._register_standard_services()
-
         logger.info(f"Gently initialized with storage at {self.storage_path}")
-
-    def _register_standard_services(self):
-        """Register info for standard services"""
-        # These are typically external services that may or may not be running
-        standard_services = [
-            ServiceInfo(
-                name="microscope_server",
-                service_type="rpc",
-                host="localhost",
-                port=18861,
-                metadata={'description': 'Main microscope control server'},
-            ),
-            ServiceInfo(
-                name="sam_server",
-                service_type="rpc",
-                host="localhost",
-                port=18862,
-                metadata={'description': 'SAM segmentation server'},
-            ),
-            ServiceInfo(
-                name="queue_server",
-                service_type="http",
-                host="localhost",
-                port=60610,
-                metadata={'description': 'Bluesky queue server'},
-            ),
-        ]
-
-        for info in standard_services:
-            self._services.register_info(info)
 
     # =========================================================================
     # Properties for accessing components
@@ -185,11 +149,6 @@ class Gently:
     def services(self) -> ServiceRegistry:
         """Access the service registry"""
         return self._services
-
-    @property
-    def client(self) -> ServiceClient:
-        """Access the service client"""
-        return self._client
 
     @property
     def sessions(self) -> SessionManager:
@@ -272,77 +231,6 @@ class Gently:
     def list_sessions(self) -> List[Dict]:
         """List available sessions"""
         return self._sessions.list_sessions()
-
-    # =========================================================================
-    # Service Connection
-    # =========================================================================
-
-    async def connect_microscope(
-        self,
-        host: str = "localhost",
-        port: int = 18861,
-    ) -> bool:
-        """
-        Connect to the microscope server
-
-        Parameters
-        ----------
-        host : str
-            Server hostname
-        port : int
-            Server port
-
-        Returns
-        -------
-        bool
-            True if connected successfully
-        """
-        # Update service info
-        info = self._services.get_info("microscope_server")
-        if info:
-            info.host = host
-            info.port = port
-
-        try:
-            conn = await self._client.connect("microscope_server")
-            logger.info(f"Connected to microscope server at {host}:{port}")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to connect to microscope: {e}")
-            return False
-
-    async def connect_sam_server(
-        self,
-        host: str = "localhost",
-        port: int = 18862,
-    ) -> bool:
-        """
-        Connect to the SAM segmentation server
-
-        Parameters
-        ----------
-        host : str
-            Server hostname
-        port : int
-            Server port
-
-        Returns
-        -------
-        bool
-            True if connected successfully
-        """
-        info = self._services.get_info("sam_server")
-        if info:
-            info.host = host
-            info.port = port
-
-        try:
-            conn = await self._client.connect("sam_server")
-            logger.info(f"Connected to SAM server at {host}:{port}")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to connect to SAM server: {e}")
-            return False
 
     # =========================================================================
     # Analysis
@@ -599,9 +487,6 @@ class Gently:
 
         # Save session
         self._sessions.save_session()
-
-        # Disconnect services
-        await self._client.disconnect_all()
 
         # Stop any running services
         await self._services.stop_all()

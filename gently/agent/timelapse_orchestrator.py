@@ -355,7 +355,7 @@ class TimelapseOrchestrator:
         """
         Parameters
         ----------
-        microscope_client : QueueServerClient
+        microscope_client : MicroscopeBackend
             Client for hardware control
         experiment_state : ExperimentState
             Shared experiment state

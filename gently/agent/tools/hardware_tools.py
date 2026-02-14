@@ -189,7 +189,7 @@ async def _adaptive_focus_sweep(
 
     Parameters
     ----------
-    client : QueueServerClient
+    client : MicroscopeBackend
         Microscope client for image capture
     copilot : MicroscopyCopilot
         Copilot for viz server access
@@ -418,7 +418,7 @@ async def _fine_focus_sweep(
 
     Parameters
     ----------
-    client : QueueServerClient
+    client : MicroscopeBackend
         Microscope client for image capture
     copilot : MicroscopyCopilot
         Copilot for viz server access
@@ -694,7 +694,7 @@ async def binary_edge_search(
 
     Parameters
     ----------
-    client : QueueServerClient
+    client : MicroscopeBackend
         Microscope client
     claude_vision : AsyncClaudeClient
         Vision API client

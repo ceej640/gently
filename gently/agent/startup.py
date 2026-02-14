@@ -83,7 +83,7 @@ class StartupSequence:
         banner_text.append("        M I C R O S C O P Y   C O P I L O T\n", style=f"bold {theme.primary}")
         banner_text.append("        ", style="dim")
         banner_text.append("─" * 39 + "\n", style=f"dim {theme.secondary}")
-        banner_text.append("        AI-Powered Adaptive diSPIM Control\n", style=theme.muted)
+        banner_text.append("        AI-Powered Adaptive Microscopy\n", style=theme.muted)
         banner_text.append("\n")
 
         panel = Panel(

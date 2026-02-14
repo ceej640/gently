@@ -5,14 +5,11 @@ Defines the abstract interface for microscope hardware backends.
 Any backend implementation must satisfy this protocol to work with
 the gently agent system.
 
-Implementations:
-- dispim_control.DiSPIMBackend: DiSPIM with ASI Tiger controller
-
 Usage:
     from gently.interface import MicroscopeBackend
-    from dispim_control import DiSPIMBackend
 
-    backend: MicroscopeBackend = DiSPIMBackend(http_url="http://127.0.0.1:60610")
+    # Backend implementation provided by a hardware-specific package
+    backend: MicroscopeBackend = create_backend(...)
     copilot = MicroscopyCopilot(backend=backend)
 """
 

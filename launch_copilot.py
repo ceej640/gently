@@ -2,7 +2,7 @@
 """
 Launch the Microscopy Copilot
 
-Conversational AI agent for diSPIM microscope control.
+Backend-agnostic AI agent for microscopy.
 
 Usage:
     python launch_copilot.py
@@ -11,6 +11,10 @@ Usage:
     python launch_copilot.py --resume            # Interactive session picker
     python launch_copilot.py --resume latest     # Resume most recent session
     python launch_copilot.py --resume <id>       # Resume specific session
+
+Backend configuration:
+    python launch_copilot.py --backend dispim
+    python launch_copilot.py --backend dispim --backend-url http://127.0.0.1:60610
 """
 
 import asyncio
@@ -32,11 +36,29 @@ from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.formatted_text import HTML
 
 from gently.agent import MicroscopyCopilot, run_rich_cli
-from dispim_control import DiSPIMBackend
 from gently.agent.startup import StartupSequence
 from gently.agent.logger import CopilotLogger
 from gently.agent.theme import get_theme
 from gently.session import SessionManager
+
+
+def _create_backend(backend_type: str, backend_url: str, sam_host: str, sam_port: int):
+    """Load and instantiate a MicroscopeBackend by type."""
+    if backend_type == "dispim":
+        try:
+            from dispim_control import DiSPIMBackend
+        except ImportError:
+            raise ImportError(
+                "dispim-control package not installed. "
+                "Install with: pip install dispim-control"
+            )
+        return DiSPIMBackend(
+            http_url=backend_url,
+            sam_host=sam_host,
+            sam_port=sam_port,
+        )
+    else:
+        raise ValueError(f"Unknown backend type: '{backend_type}'")
 
 
 async def show_session_picker(storage_dir: Path, console: Console) -> str:
@@ -241,12 +263,22 @@ def list_sessions(storage_dir: Path, console: Console):
     console.print(f"\n[{theme.muted}]Use: python launch_copilot.py --resume <id>[/]")
 
 
-async def main(offline: bool = False, resume_session: str = None, show_sessions: bool = False, pick_session: bool = False):
+async def main(
+    offline: bool = False,
+    resume_session: str = None,
+    show_sessions: bool = False,
+    pick_session: bool = False,
+    backend_type: str = "dispim",
+    backend_url: str = "http://127.0.0.1:60610",
+    sam_host: str = "localhost",
+    sam_port: int = 18862,
+    storage_dir: str = None,
+):
     theme = get_theme()
     console = Console()
 
     # Storage directory
-    storage_dir = Path("D:/Gently")
+    storage_dir = Path(storage_dir) if storage_dir else Path("./experiment_data")
     storage_dir.mkdir(exist_ok=True)
 
     # Handle --sessions (just list and exit)
@@ -288,33 +320,34 @@ async def main(offline: bool = False, resume_session: str = None, show_sessions:
     backend = None
 
     if not offline:
-        # Connect to servers with clean status display
-        backend = DiSPIMBackend(
-            http_url="http://127.0.0.1:60610",
-            sam_host="localhost",
-            sam_port=18862
-        )
+        # Load backend
+        try:
+            backend = _create_backend(backend_type, backend_url, sam_host, sam_port)
+        except ImportError as e:
+            console.print(f"\n[{theme.error}]{theme.icon_error} {e}[/]")
+            console.print(f"[{theme.muted}]Falling back to offline mode[/]")
+            offline = True
 
+    if not offline and backend is not None:
         connected = await backend.connect()
 
         # Build status table
         status_lines = []
 
         if backend.is_connected:
-            status_lines.append((theme.icon_success, "Queue Server", "connected", theme.success))
+            status_lines.append((theme.icon_success, "Backend", "connected", theme.success))
             status = await backend.get_status()
             qs_status = status.get('queue_server', {})
             manager_state = qs_status.get('manager_state', 'unknown')
             status_lines.append((theme.icon_info, "  Manager", manager_state, theme.muted))
         else:
-            status_lines.append((theme.icon_error, "Queue Server", "not connected", theme.error))
+            status_lines.append((theme.icon_error, "Backend", "not connected", theme.error))
 
         if backend.has_sam:
-            status_lines.append((theme.icon_success, "SAM Server", "connected", theme.success))
+            status_lines.append((theme.icon_success, "Detection Server", "connected", theme.success))
         else:
-            status_lines.append((theme.icon_warning, "SAM Server", "not connected", theme.warning))
+            status_lines.append((theme.icon_warning, "Detection Server", "not connected", theme.warning))
 
-        # Databroker is only usable if Queue Server is connected
         if backend.has_databroker and backend.is_connected:
             status_lines.append((theme.icon_success, "Databroker", "connected", theme.success))
         else:
@@ -338,7 +371,6 @@ async def main(offline: bool = False, resume_session: str = None, show_sessions:
 
         if not connected:
             console.print(f"\n[{theme.warning}]{theme.icon_warning} Running in offline mode[/]")
-            # Close the session before discarding backend
             await backend.disconnect()
             backend = None
     else:
@@ -389,6 +421,16 @@ if __name__ == "__main__":
     parser.add_argument("--sessions", action="store_true", help="List available sessions and exit")
     parser.add_argument("--resume", nargs="?", const="__PICK__", metavar="ID",
                         help="Resume a session. Without ID: shows picker. With ID: resumes that session.")
+    parser.add_argument("--backend", default="dispim", metavar="TYPE",
+                        help="Backend type (default: dispim)")
+    parser.add_argument("--backend-url", default="http://127.0.0.1:60610",
+                        help="Backend server URL")
+    parser.add_argument("--sam-host", default="localhost",
+                        help="SAM/detection server hostname")
+    parser.add_argument("--sam-port", type=int, default=18862,
+                        help="SAM/detection server port")
+    parser.add_argument("--storage-dir", default=None,
+                        help="Data storage directory (default: ./experiment_data)")
     args = parser.parse_args()
 
     # Determine resume mode
@@ -399,5 +441,10 @@ if __name__ == "__main__":
         offline=args.offline,
         show_sessions=args.sessions,
         resume_session=resume_id,
-        pick_session=pick_session
+        pick_session=pick_session,
+        backend_type=args.backend,
+        backend_url=args.backend_url,
+        sam_host=args.sam_host,
+        sam_port=args.sam_port,
+        storage_dir=args.storage_dir,
     ))

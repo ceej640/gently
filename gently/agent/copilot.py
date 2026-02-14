@@ -193,7 +193,7 @@ class MicroscopyCopilot:
         # Build connection status
         if self.backend:
             connection_status = {
-                'queue_server': self.backend.is_connected,
+                'backend': self.backend.is_connected,
                 'sam_server': self.backend.has_sam,
                 'databroker': self.backend.has_databroker and self.backend.is_connected,
             }
