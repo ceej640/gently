@@ -1,0 +1,20 @@
+{
+  "name": "gently-desktop",
+  "version": "0.1.0",
+  "description": "Gently Microscopy Copilot — Desktop App",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "cross-env NODE_ENV=development electron .",
+    "build:python": "node build-python.js",
+    "build:electron": "electron-builder --config electron-builder.yml",
+    "build": "npm run build:python && npm run build:electron"
+  },
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "~33.3.1",
+    "electron-builder": "~25.1.8",
+    "cross-env": "^7.0.3"
+  }
+}

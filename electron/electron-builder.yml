@@ -1,0 +1,65 @@
+# electron-builder configuration
+# Builds installers for Windows, macOS, and Linux.
+# PyInstaller output is included as extraResources.
+#
+# Usage:  cd electron && npm run build:electron
+# (builds for the current OS only)
+
+appId: com.gently.desktop
+productName: Gently
+copyright: Copyright © 2025
+
+directories:
+  output: dist
+  buildResources: build
+
+files:
+  - main.js
+  - preload.js
+  - wizard.html
+  - wizard.css
+  - package.json
+
+extraResources:
+  - from: "../dist/electron_entry"
+    to: "python-dist/electron_entry"
+    filter:
+      - "**/*"
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: build/icon.ico
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  installerIcon: build/icon.ico
+
+mac:
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+  category: public.app-category.productivity
+  icon: build/icon.icns
+
+dmg:
+  contents:
+    - x: 130
+      y: 220
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications
+
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+  category: Science
+  icon: build/icon.png

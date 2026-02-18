@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline';" />
+  <title>Gently — Setup</title>
+  <link rel="stylesheet" href="wizard.css" />
+</head>
+<body>
+  <div class="wizard">
+    <h1>Welcome to Gently</h1>
+    <p class="subtitle">Let's get you set up. You'll need an Anthropic API key.</p>
+
+    <!-- API Key -->
+    <div class="field">
+      <label for="apiKey">Anthropic API Key</label>
+      <div class="input-wrap">
+        <input id="apiKey" type="password" placeholder="sk-ant-..." autocomplete="off" spellcheck="false" />
+        <button class="toggle-vis" id="toggleKey" type="button">Show</button>
+      </div>
+      <div class="error-msg" id="keyError"></div>
+    </div>
+
+    <!-- Storage Path -->
+    <div class="field">
+      <label for="storagePath">Data Storage Folder</label>
+      <div class="path-row">
+        <input id="storagePath" type="text" readonly />
+        <button id="browseBtn" type="button">Browse</button>
+      </div>
+      <p class="hint">Where Gently stores experiment data and sessions.</p>
+    </div>
+
+    <!-- Submit -->
+    <div class="actions">
+      <button class="primary" id="startBtn" type="button" disabled>Get Started</button>
+      <a href="#" class="skip-link" id="skipBtn">Skip for now</a>
+    </div>
+  </div>
+
+  <script>
+    const apiKeyInput   = document.getElementById("apiKey");
+    const toggleKeyBtn  = document.getElementById("toggleKey");
+    const keyError      = document.getElementById("keyError");
+    const storageInput  = document.getElementById("storagePath");
+    const browseBtn     = document.getElementById("browseBtn");
+    const startBtn      = document.getElementById("startBtn");
+
+    // Populate default storage path
+    window.gently.getDefaultStoragePath().then((p) => {
+      storageInput.value = p;
+      validate();
+    });
+
+    // Toggle password visibility
+    toggleKeyBtn.addEventListener("click", () => {
+      const isPassword = apiKeyInput.type === "password";
+      apiKeyInput.type = isPassword ? "text" : "password";
+      toggleKeyBtn.textContent = isPassword ? "Hide" : "Show";
+    });
+
+    // Browse for folder
+    browseBtn.addEventListener("click", async () => {
+      const folder = await window.gently.selectFolder();
+      if (folder) {
+        storageInput.value = folder;
+        validate();
+      }
+    });
+
+    // Validate on input
+    apiKeyInput.addEventListener("input", validate);
+
+    async function validate() {
+      const key = apiKeyInput.value.trim();
+      const path = storageInput.value.trim();
+
+      if (!key) {
+        keyError.textContent = "";
+        apiKeyInput.classList.remove("invalid");
+        startBtn.disabled = true;
+        return;
+      }
+
+      const valid = await window.gently.validateApiKey(key);
+      if (!valid) {
+        keyError.textContent = "Key should start with sk-ant-";
+        apiKeyInput.classList.add("invalid");
+        startBtn.disabled = true;
+        return;
+      }
+
+      keyError.textContent = "";
+      apiKeyInput.classList.remove("invalid");
+      startBtn.disabled = !(key && path);
+    }
+
+    // Skip
+    const skipBtn = document.getElementById("skipBtn");
+    skipBtn.addEventListener("click", async (e) => {
+      e.preventDefault();
+      const cfg = {
+        apiKey: "",
+        storagePath: storageInput.value.trim(),
+      };
+      await window.gently.saveConfig(cfg);
+      window.gently.wizardSkip(cfg);
+    });
+
+    // Submit
+    startBtn.addEventListener("click", async () => {
+      startBtn.disabled = true;
+      startBtn.textContent = "Starting...";
+
+      const cfg = {
+        apiKey: apiKeyInput.value.trim(),
+        storagePath: storageInput.value.trim(),
+      };
+
+      await window.gently.saveConfig(cfg);
+      window.gently.wizardDone(cfg);
+    });
+  </script>
+</body>
+</html>

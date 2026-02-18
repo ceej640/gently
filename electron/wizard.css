@@ -1,0 +1,183 @@
+/* Gently — First-Run Setup Wizard */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  background: #0f172a;
+  color: #e2e8f0;
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+.wizard {
+  -webkit-app-region: no-drag;
+  width: 440px;
+  padding: 40px 36px 32px;
+}
+
+.wizard h1 {
+  font-size: 26px;
+  font-weight: 700;
+  margin-bottom: 6px;
+  color: #f1f5f9;
+}
+
+.wizard .subtitle {
+  font-size: 14px;
+  color: #94a3b8;
+  margin-bottom: 32px;
+}
+
+.field {
+  margin-bottom: 22px;
+}
+
+.field label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: #cbd5e1;
+  margin-bottom: 6px;
+}
+
+.field .hint {
+  font-size: 12px;
+  color: #64748b;
+  margin-top: 4px;
+}
+
+.input-wrap {
+  position: relative;
+  display: flex;
+}
+
+.input-wrap input {
+  flex: 1;
+  padding: 10px 12px;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  background: #1e293b;
+  color: #e2e8f0;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.input-wrap input:focus {
+  border-color: #60a5fa;
+}
+
+.input-wrap input.invalid {
+  border-color: #f87171;
+}
+
+.input-wrap .toggle-vis {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: #64748b;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 2px 4px;
+}
+
+.input-wrap .toggle-vis:hover {
+  color: #94a3b8;
+}
+
+.path-row {
+  display: flex;
+  gap: 8px;
+}
+
+.path-row input {
+  flex: 1;
+  padding: 10px 12px;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  background: #1e293b;
+  color: #e2e8f0;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.path-row input:focus {
+  border-color: #60a5fa;
+}
+
+.path-row button {
+  padding: 10px 14px;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  background: #1e293b;
+  color: #cbd5e1;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+
+.path-row button:hover {
+  background: #334155;
+}
+
+.error-msg {
+  font-size: 12px;
+  color: #f87171;
+  margin-top: 4px;
+  min-height: 16px;
+}
+
+.actions {
+  margin-top: 32px;
+}
+
+.actions button.primary {
+  width: 100%;
+  padding: 12px;
+  border: none;
+  border-radius: 8px;
+  background: #3b82f6;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.actions button.primary:hover {
+  background: #2563eb;
+}
+
+.actions button.primary:disabled {
+  background: #1e3a5f;
+  color: #64748b;
+  cursor: not-allowed;
+}
+
+.actions .skip-link {
+  display: block;
+  text-align: center;
+  margin-top: 14px;
+  font-size: 13px;
+  color: #64748b;
+  text-decoration: none;
+  transition: color 0.15s;
+}
+
+.actions .skip-link:hover {
+  color: #94a3b8;
+}

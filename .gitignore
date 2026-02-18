@@ -66,6 +66,11 @@ dmypy.json
 gently/tui/node_modules/
 gently/tui/dist/
 
+# Electron desktop app
+electron/node_modules/
+electron/dist/
+electron/build/
+
 # Database
 *.db
 *.sqlite
