@@ -132,12 +132,82 @@ def _write_yaml(path: Path, data: Any) -> None:
         raise
 
 
+# -- Legacy-compatible YAML loader ----------------------------------------
+# Older sessions wrote numpy scalars as ``!!python/object/apply:numpy.*`` tags
+# before ``_sanitize_for_yaml`` existed. SafeLoader refuses those tags, which
+# breaks reads on those files. Register a narrow constructor that decodes
+# those specific numpy scalar nodes into plain Python floats/ints, without
+# opening the door to generic Python object deserialization.
+
+class _GentlyYAMLLoader(yaml.SafeLoader):
+    pass
+
+
+def _construct_numpy_scalar(loader, node):
+    """Decode ``!!python/object/apply:numpy.core.multiarray.scalar`` nodes.
+
+    Node shape: ``[dtype_obj, binary_bytes]``. We rebuild the scalar via
+    ``np.frombuffer`` and return a native Python number.
+    """
+    try:
+        seq = loader.construct_sequence(node, deep=True)
+        dtype = seq[0] if len(seq) > 0 else None
+        raw = seq[1] if len(seq) > 1 else None
+        if isinstance(raw, (bytes, bytearray)) and dtype is not None:
+            arr = np.frombuffer(bytes(raw), dtype=dtype)
+            if arr.size:
+                val = arr[0]
+                if isinstance(val, np.integer):
+                    return int(val)
+                return float(val)
+    except Exception:
+        logger.debug("Failed to decode numpy scalar YAML node", exc_info=True)
+    return None
+
+
+def _construct_numpy_dtype(loader, node):
+    """Decode ``!!python/object/apply:numpy.dtype`` nodes into a numpy dtype."""
+    try:
+        args = []
+        state = None
+        if isinstance(node, yaml.MappingNode):
+            mapping = loader.construct_mapping(node, deep=True)
+            args = mapping.get("args") or []
+            state = mapping.get("state")
+        else:
+            args = loader.construct_sequence(node, deep=True)
+        if args:
+            return np.dtype(*args)
+    except Exception:
+        logger.debug("Failed to decode numpy dtype YAML node", exc_info=True)
+    return None
+
+
+def _construct_python_tuple(loader, node):
+    """Allow ``!!python/tuple`` (used inside legacy numpy dtype state)."""
+    return tuple(loader.construct_sequence(node, deep=True))
+
+
+_GentlyYAMLLoader.add_constructor(
+    "tag:yaml.org,2002:python/object/apply:numpy.core.multiarray.scalar",
+    _construct_numpy_scalar,
+)
+_GentlyYAMLLoader.add_constructor(
+    "tag:yaml.org,2002:python/object/apply:numpy.dtype",
+    _construct_numpy_dtype,
+)
+_GentlyYAMLLoader.add_constructor(
+    "tag:yaml.org,2002:python/tuple",
+    _construct_python_tuple,
+)
+
+
 def _read_yaml(path: Path) -> Any:
     """Read a YAML file.  Returns None if missing or empty."""
     if not path.exists():
         return None
     with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+        return yaml.load(f, Loader=_GentlyYAMLLoader)
 
 
 def _append_jsonl(path: Path, record: dict) -> None:
@@ -1053,6 +1123,28 @@ class FileStore:
         # Sort by timepoint, then prediction_id
         result.sort(key=lambda p: (p.get("timepoint", 0), p.get("prediction_id", 0)))
         return result
+
+    # ==================================================================
+    # Watchdog Observer State
+    # ==================================================================
+
+    def observer_state_path(self, session_id: str) -> Path:
+        """Path to the watchdog observer state file for a session."""
+        sd = self._require_session_dir(session_id)
+        return sd / "observer_state.yaml"
+
+    def load_observer_state(self, session_id: str) -> Optional[dict]:
+        """Load the watchdog observer state. Returns None if absent."""
+        try:
+            path = self.observer_state_path(session_id)
+        except FileNotFoundError:
+            return None
+        return _read_yaml(path)
+
+    def save_observer_state(self, session_id: str, state: dict) -> None:
+        """Persist the watchdog observer state atomically."""
+        path = self.observer_state_path(session_id)
+        _write_yaml(path, state)
 
     # ==================================================================
     # Ground Truth

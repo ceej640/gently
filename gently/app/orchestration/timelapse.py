@@ -69,6 +69,7 @@ class TimelapseOrchestrator:
         on_volume_callback: Optional[Callable] = None,
         session_id: Optional[str] = None,
         store: Optional["FileStore"] = None,
+        observer_factory: Optional[Callable] = None,
     ):
         """
         Parameters
@@ -85,6 +86,11 @@ class TimelapseOrchestrator:
             Session identifier for trace file storage
         store : FileStore, optional
             Unified data store for persisting perception predictions
+        observer_factory : callable, optional
+            Factory invoked inside :meth:`start` to construct the watchdog
+            Observer for this timelapse. Signature:
+            ``factory(session_id, embryo_ids, store, event_bus) -> Observer``.
+            Optional — watchdog layer is skipped if not provided.
         """
         self.client = microscope_client
         self.experiment = experiment_state
@@ -101,6 +107,10 @@ class TimelapseOrchestrator:
 
         # Event bus for status updates
         self._event_bus = get_event_bus()
+
+        # Watchdog observer — constructed in start() via the factory.
+        self._observer_factory = observer_factory
+        self.observer = None  # populated on start() if factory provided
 
         # Timelapse state
         self._embryo_states: Dict[str, EmbryoAcquisitionState] = {}
@@ -236,6 +246,9 @@ class TimelapseOrchestrator:
             'interval_seconds': base_interval_seconds,
         })
 
+        # Launch the watchdog observer (optional — skipped if no factory)
+        await self._start_observer(embryo_ids)
+
         logger.info(f"Started timelapse for {len(embryo_ids)} embryos")
 
         return (
@@ -350,6 +363,11 @@ class TimelapseOrchestrator:
                         'total_timepoints': self._total_timepoints,
                         'duration_minutes': (datetime.now() - self._started_at).total_seconds() / 60,
                     })
+                    # Observer stop is best-effort on natural completion
+                    try:
+                        await self._stop_observer()
+                    except Exception:
+                        logger.debug("observer stop failed on completion", exc_info=True)
                     logger.info("Timelapse completed - all embryos finished")
                     break
 
@@ -935,6 +953,9 @@ class TimelapseOrchestrator:
 
         self._finalize_perception_run("stopped")
 
+        # Stop the watchdog observer if it's running
+        await self._stop_observer()
+
         # Emit stop event for viz server and other listeners
         get_event_bus().publish(
             EventType.ACQUISITION_STOPPED,
@@ -947,6 +968,48 @@ class TimelapseOrchestrator:
         )
 
         return f"Timelapse stopped (reason: {reason}). Acquired {self._total_timepoints} total timepoints."
+
+    # ------------------------------------------------------------------
+    # Watchdog observer lifecycle
+    # ------------------------------------------------------------------
+
+    async def _start_observer(self, embryo_ids: List[str]) -> None:
+        """Construct and start the watchdog observer via the factory, if provided."""
+        if self.observer is not None:
+            return  # already running
+        if self._observer_factory is None:
+            return  # watchdog layer not wired in for this agent
+        if not settings.watchdog.enabled:
+            return
+        try:
+            observer = self._observer_factory(
+                session_id=self._session_id,
+                embryo_ids=list(embryo_ids),
+                store=self._store,
+                event_bus=self._event_bus,
+            )
+        except Exception:
+            logger.exception("Failed to construct watchdog observer; continuing without it")
+            return
+        if observer is None:
+            return
+        try:
+            await observer.start()
+            self.observer = observer
+            logger.info("Watchdog observer started for session %s", self._session_id)
+        except Exception:
+            logger.exception("Watchdog observer failed to start; continuing without it")
+            self.observer = None
+
+    async def _stop_observer(self) -> None:
+        if self.observer is None:
+            return
+        try:
+            await self.observer.stop()
+        except Exception:
+            logger.exception("Watchdog observer raised during stop; swallowing")
+        finally:
+            self.observer = None
 
     async def pause(self) -> str:
         """Pause the timelapse"""

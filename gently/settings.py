@@ -106,6 +106,37 @@ class TransferSettings:
 
 
 @dataclass(frozen=True)
+class WatchdogSettings:
+    """Background watchdog layer parameters.
+
+    The watchdog is a secondary observer agent that consumes channel digests
+    (progress / perception / hardware / system health) and maintains a running
+    narrative of the experiment. It speaks to the orchestrator via a
+    get_system_status tool (pull) or, for critical observations, an attributed
+    handoff drained at the next turn boundary (push). See docs/watchdog_layer.md.
+    """
+    enabled: bool = field(default_factory=lambda: _env("WATCHDOG_ENABLED", True))
+    model: str = field(default_factory=lambda: _env("WATCHDOG_MODEL", ""))  # empty → use models.fast
+    # How often the observer digests channels (seconds)
+    tick_interval_s: float = field(default_factory=lambda: _env("WATCHDOG_TICK_INTERVAL", 30.0))
+    # How many channel digests the observer keeps verbatim before self-summarizing
+    narrative_digest_cap: int = field(default_factory=lambda: _env("WATCHDOG_DIGEST_CAP", 20))
+    # Per-embryo action cooldown: when the orchestrator acts on an embryo,
+    # suppress further observations about that embryo for this long
+    action_cooldown_s: float = field(default_factory=lambda: _env("WATCHDOG_ACTION_COOLDOWN", 300.0))
+    # Per-observation dedup window
+    dedup_window_s: float = field(default_factory=lambda: _env("WATCHDOG_DEDUP_WINDOW", 1800.0))
+    # Critical push rate limit
+    critical_push_min_gap_s: float = field(default_factory=lambda: _env("WATCHDOG_CRITICAL_MIN_GAP", 600.0))
+    # V1: autonomous turns disabled — critical handoffs wait for the next user turn
+    autonomous_turns_enabled: bool = field(default_factory=lambda: _env("WATCHDOG_AUTONOMOUS_TURNS", False))
+    # Calibration R² threshold below which hardware channel flags an embryo
+    min_calibration_r_squared: float = field(default_factory=lambda: _env("WATCHDOG_MIN_R2", 0.75))
+    # No-object streak length that promotes perception observation to warning
+    no_object_streak_warning: int = field(default_factory=lambda: _env("WATCHDOG_NO_OBJECT_WARNING", 3))
+
+
+@dataclass(frozen=True)
 class Settings:
     """Top-level settings container."""
     network: NetworkSettings = field(default_factory=NetworkSettings)
@@ -116,6 +147,7 @@ class Settings:
     api: ApiSettings = field(default_factory=ApiSettings)
     ml: MlSettings = field(default_factory=MlSettings)
     transfer: TransferSettings = field(default_factory=TransferSettings)
+    watchdog: WatchdogSettings = field(default_factory=WatchdogSettings)
 
 
 # Singleton — import this everywhere

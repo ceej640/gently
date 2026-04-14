@@ -48,6 +48,72 @@ class ConversationManager:
         self.choice_handler = None
         self.context_store = None  # for tool_label
 
+        # Watchdog critical-handoff queue — drained at the next turn boundary
+        # and injected as a user-role message with a [source — severity] prefix
+        # (mirrors the tool_result attribution pattern). See
+        # gently/app/orchestration/watchdog/observer.py.
+        self._pending_handoffs: List[Dict[str, Any]] = []
+
+    # ===== Watchdog critical-handoff queue =====
+
+    def inject_critical_handoff(
+        self,
+        source: str,
+        severity: str,
+        message: str,
+        *,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Queue a watchdog critical message for the next turn.
+
+        Called by the observer when it detects something the orchestrator
+        needs to know immediately. The message is appended to
+        ``conversation_history`` at the next ``drain_critical_handoffs`` call
+        — which happens inside ``handle_message_stream`` just before the
+        user's actual message. The net effect: the orchestrator sees the
+        handoff as a user-role message with a clear attribution prefix.
+
+        This method is safe to call from any thread — the pending list is
+        append-only and the drain path is single-writer.
+        """
+        handoff = {
+            "source": str(source),
+            "severity": str(severity),
+            "message": str(message),
+            "context": context or {},
+            "queued_at": time.time(),
+        }
+        self._pending_handoffs.append(handoff)
+
+    def drain_critical_handoffs(self) -> List[Dict[str, Any]]:
+        """Drain queued handoffs into ``conversation_history`` as user-role
+        messages, one per handoff. Returns the drained handoffs (for logging).
+
+        Uses the same attribution pattern as tool results: a user-role
+        message whose content begins with ``[source — severity]`` so the
+        orchestrator can immediately tell it isn't from the human. Multiple
+        consecutive user-role messages are permitted by the API.
+        """
+        if not self._pending_handoffs:
+            return []
+        drained = list(self._pending_handoffs)
+        self._pending_handoffs.clear()
+        for h in drained:
+            prefix = f"[{h['source']} \u2014 {str(h['severity']).upper()}]"
+            body = h["message"].strip()
+            content = f"{prefix} {body}"
+            extra = h.get("context") or {}
+            if extra:
+                try:
+                    content += "\n\nContext:\n" + json.dumps(extra, default=str, indent=2)
+                except Exception:
+                    pass
+            self.conversation_history.append({"role": "user", "content": content})
+        return drained
+
+    def pending_handoff_count(self) -> int:
+        return len(self._pending_handoffs)
+
     # ===== Quick Response =====
 
     def try_quick_response(self, message: str, experiment, mode: str,

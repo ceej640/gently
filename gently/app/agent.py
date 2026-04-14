@@ -406,10 +406,47 @@ class MicroscopyAgent:
                 on_volume_callback=self.on_volume_acquired,
                 session_id=self.session_id,
                 store=self.store,
+                observer_factory=self._build_watchdog_observer,
             )
         except Exception as e:
             logging.getLogger(__name__).warning(f"Failed to init timelapse orchestrator: {e}")
             self.timelapse_orchestrator = None
+
+    def _build_watchdog_observer(self, *, session_id, embryo_ids, store, event_bus):
+        """Observer factory passed into the timelapse orchestrator.
+
+        Invoked at timelapse ``start()`` so the factory sees the final set of
+        embryo_ids. Returns a configured :class:`Observer` or ``None`` if the
+        watchdog is disabled.
+        """
+        if not settings.watchdog.enabled:
+            return None
+        # Local import to avoid a hard dependency cycle at module load
+        from gently.app.orchestration.watchdog import Observer
+
+        def _push(handoff):
+            # Inject the critical message into the orchestrator's next turn
+            self.conversation.inject_critical_handoff(
+                source=handoff.get("source", "watchdog_observer"),
+                severity=handoff.get("severity", "critical"),
+                message=handoff.get("message", ""),
+                context={"tick": handoff.get("tick")},
+            )
+
+        try:
+            return Observer(
+                claude_client=self.claude,
+                store=store,
+                session_id=session_id,
+                event_bus=event_bus,
+                embryo_ids=embryo_ids,
+                on_critical_push=_push,
+                # on_notification left None — TUI plumbing is per-frontend; tools
+                # get_system_status covers the pull path for the orchestrator.
+            )
+        except Exception as e:
+            logging.getLogger(__name__).warning(f"Failed to build watchdog observer: {e}")
+            return None
 
     def _init_timeline_manager(self):
         """Initialize the timeline manager for event tracking."""
@@ -585,6 +622,12 @@ class MicroscopyAgent:
         )
         self._update_system_prompt(context_summary)
 
+        # Drain any queued watchdog critical handoffs — they become user-role
+        # messages preceding the real user message in this turn.
+        drained = self.conversation.drain_critical_handoffs()
+        if drained:
+            logger.info("drained %d watchdog critical handoff(s) into conversation", len(drained))
+
         # Add user message to history
         self.conversation.conversation_history.append({
             "role": "user",
@@ -626,6 +669,11 @@ class MicroscopyAgent:
             self.experiment, self.timelapse_orchestrator, self.timeline_manager
         )
         self._update_system_prompt(context_summary)
+
+        # Drain watchdog critical handoffs before the user message is appended.
+        drained = self.conversation.drain_critical_handoffs()
+        if drained:
+            logger.info("drained %d watchdog critical handoff(s) into conversation", len(drained))
 
         self.conversation.conversation_history.append({
             "role": "user",
