@@ -332,7 +332,10 @@ async def edit_embryos(
 
                 # Update or add embryo
                 if emb_id in agent.experiment.embryos:
-                    # Update existing
+                    # Update existing — direct setter writes to coarse via the
+                    # stage_position property. Fire notify at the end of the
+                    # loop so we publish one consolidated EMBRYOS_UPDATE rather
+                    # than one per mutation.
                     agent.experiment.embryos[emb_id].stage_position = position
                 else:
                     # Add new
@@ -350,6 +353,9 @@ async def edit_embryos(
             for rid in removed_ids:
                 if rid in agent.experiment.embryos:
                     del agent.experiment.embryos[rid]
+
+            # One consolidated broadcast for the whole editor session.
+            agent.experiment.notify_embryos_changed()
 
             # Build summary
             summary = f"Edit complete: {len(new_ids)} embryos"
