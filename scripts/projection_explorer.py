@@ -342,68 +342,20 @@ def projection_dual_view(volume: np.ndarray) -> Tuple[np.ndarray, str]:
 
 
 def projection_depth_colored(volume: np.ndarray, colormap: str = 'turbo') -> Tuple[np.ndarray, str]:
-    """
-    Depth-colored max intensity projection with side view.
-
-    First, create a Z-depth colored volume (each slice colored by its Z position).
-    Then project from TOP (along Z) and SIDE (along Y).
-
-    Both views show the same Z-depth coloring, allowing you to trace
-    structures between views using consistent colors.
-
-    Returns:
-        (RGB image, description) tuple
-    """
+    """Depth-colored MIP with TOP (XY) + SIDE (XZ) panels."""
     if volume.ndim != 3:
         gray = normalize_image(volume)
         return np.stack([gray, gray, gray], axis=-1), "2D input"
-
+    from gently_perception.render import depth_colored_projection
     z_depth, height, width = volume.shape
-
-    # Get colormap
-    if plt is not None:
-        cmap = plt.get_cmap(colormap)
-    else:
-        cmap = None
-
-    # Create Z-depth colored volume: each slice gets colored by its Z position
-    # Shape: (Z, Y, X, 3)
-    colored_volume = np.zeros((z_depth, height, width, 3), dtype=np.float32)
-
-    for z in range(z_depth):
-        z_norm = z / max(1, z_depth - 1)  # 0 to 1
-
-        # Get color for this depth
-        if cmap is not None:
-            color = np.array(cmap(z_norm)[:3])  # RGB
-        else:
-            color = np.array([z_norm, 0.5, 1 - z_norm])  # Simple gradient
-
-        # Get intensity for this slice, normalized
-        slice_data = volume[z].astype(np.float32)
-        slice_norm = (slice_data - slice_data.min()) / max(1, slice_data.max() - slice_data.min())
-
-        # Color the slice: intensity * depth_color
-        colored_volume[z] = slice_norm[:, :, np.newaxis] * color
-
-    # === TOP VIEW: Max projection along Z of colored volume ===
-    top_rgb = np.max(colored_volume, axis=0)  # Shape: (Y, X, 3)
-    top_rgb = (top_rgb * 255).astype(np.uint8)
-
-    # === SIDE VIEW: Max projection along Y of colored volume ===
-    side_rgb = np.max(colored_volume, axis=1)  # Shape: (Z, X, 3)
-    side_rgb = (side_rgb * 255).astype(np.uint8)
-
-    # Scale side view to match top width and reasonable height
+    top_rgb = depth_colored_projection(volume, axis=0, colormap=colormap)
+    side_rgb = depth_colored_projection(volume, axis=1, colormap=colormap)
     pil_side = PIL_Image.fromarray(side_rgb)
-    side_new_h = max(height // 3, int(z_depth * 3))  # Make Z dimension more visible
+    side_new_h = max(height // 3, int(z_depth * 3))
     pil_side = pil_side.resize((width, side_new_h), PIL_Image.Resampling.LANCZOS)
     side_scaled = np.array(pil_side)
-
-    # Combine vertically: TOP above, SIDE below
     sep = np.ones((3, width, 3), dtype=np.uint8) * 128
     combined = np.concatenate([top_rgb, sep, side_scaled], axis=0)
-
     return combined, f"Z-depth colored MIP ({colormap}): TOP + SIDE views"
 
 

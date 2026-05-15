@@ -129,36 +129,17 @@ def projection_depth_colored(
     colormap: str = 'turbo',
     voxel_size: Tuple[float, float, float] = (1.0, 0.1625, 0.1625),
 ) -> Tuple[np.ndarray, str]:
-    """Depth-colored max intensity projection.
-
-    voxel_size: (dz, dy, dx) in microns. The side view is rescaled so the
-    XZ panel is isometric with the XY panel above it.
-    """
+    """Depth-colored MIP: TOP (XY) above, SIDE (XZ) below, isometric side panel."""
     ensure_projection_deps()
     if volume.ndim != 3:
         gray = normalize_image(volume)
         return np.stack([gray, gray, gray], axis=-1), "2D input"
+    from gently_perception.render import depth_colored_projection
     z_depth, height, width = volume.shape
     dz, dy, dx = voxel_size
-    try:
-        import matplotlib.pyplot as plt
-        cmap = plt.get_cmap(colormap)
-    except:
-        cmap = None
-    colored_volume = np.zeros((z_depth, height, width, 3), dtype=np.float32)
-    for z in range(z_depth):
-        z_norm = z / max(1, z_depth - 1)
-        if cmap is not None:
-            color = np.array(cmap(z_norm)[:3])
-        else:
-            color = np.array([z_norm, 0.5, 1 - z_norm])
-        slice_data = volume[z].astype(np.float32)
-        slice_norm = (slice_data - slice_data.min()) / max(1, slice_data.max() - slice_data.min())
-        colored_volume[z] = slice_norm[:, :, np.newaxis] * color
-    top_rgb = (np.max(colored_volume, axis=0) * 255).astype(np.uint8)
-    side_rgb = (np.max(colored_volume, axis=1) * 255).astype(np.uint8)
+    top_rgb = depth_colored_projection(volume, axis=0, colormap=colormap)
+    side_rgb = depth_colored_projection(volume, axis=1, colormap=colormap)
     pil_side = PIL_Image.fromarray(side_rgb)
-    # Isometric side height - see projection_dual_view for the same math.
     z_display_h = max(1, int(round(z_depth * dz / dx)))
     side_new_h = max(height // 3, z_display_h)
     pil_side = pil_side.resize((width, side_new_h), PIL_Image.Resampling.LANCZOS)
