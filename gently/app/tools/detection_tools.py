@@ -82,6 +82,7 @@ async def detect_embryos(
         editor_note = ""
 
         viz_server = getattr(agent, 'viz_server', None)
+        operator_marked = False
         if open_editor and embryos and viz_server is not None:
             edited, editor_note = await _run_web_editor(
                 client=client,
@@ -93,6 +94,7 @@ async def detect_embryos(
             )
             if edited is not None:
                 embryos = edited
+                operator_marked = True
         elif open_editor and viz_server is None:
             editor_note = " (web editor unavailable — viz server not running)"
 
@@ -108,6 +110,29 @@ async def detect_embryos(
                 confidence=emb.get('confidence', 0.0),
                 uid=emb.get('uid'),  # Preserve UID from detection
             )
+
+        # OPERATOR_MARKED_EMBRYOS fires only when the human actually
+        # confirmed via the web canvas — that's the intent signal. If the
+        # editor was skipped (no viz_server) the SAM list still landed in
+        # experiment.embryos, but it wasn't operator-confirmed so we
+        # don't emit the operator event.
+        if operator_marked:
+            bus = getattr(agent, '_event_bus', None)
+            if bus is not None:
+                from gently.core.event_bus import EventType
+                try:
+                    bus.publish(
+                        event_type=EventType.OPERATOR_MARKED_EMBRYOS,
+                        data={
+                            'embryo_ids': [e.get('embryo_id') for e in embryos],
+                            'count': len(embryos),
+                            'stage_origin': list(result.get('stage_position', (0.0, 0.0))),
+                            'pre_edit_count': len(result.get('embryos', [])),
+                        },
+                        source='detect_embryos:web-editor',
+                    )
+                except Exception:
+                    pass
 
         if auto_calibrate and embryos:
             return f"Detected {len(embryos)} embryos{editor_note}. Starting calibration..."
