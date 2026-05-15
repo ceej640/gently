@@ -26,10 +26,16 @@ const DevicesManager = (function () {
     let _mapSvg, _mapBg, _mapGridMinor, _mapGridMajor, _mapAxisEmphasis;
     let _mapBeyond, _mapCoverslip;
     let _mapZones, _mapZoneLabels, _mapOrigin, _mapAxes;
+    let _mapEmbryos;
     let _mapMarker, _mapMarkerPulse, _mapMarkerRing, _mapMarkerDot;
     let _mapReadoutX, _mapReadoutY;
     let _mapWrap;
     let _scalebarLabel;
+
+    // Embryo waypoints — driven by EMBRYOS_UPDATE events and the initial
+    // /api/embryos/current snapshot. Each entry mirrors EmbryoState.to_dict()
+    // (id, position_coarse, position_fine, has_fine_position, nickname, ...).
+    let _embryos = [];
 
     // Bottom-camera panel DOM + state
     let _camPanel, _camToggle, _camImg, _camPlaceholder, _camLed, _camMeta;
@@ -83,6 +89,7 @@ const DevicesManager = (function () {
         _mapZoneLabels    = document.getElementById('devices-map-zone-labels');
         _mapOrigin        = document.getElementById('devices-map-origin');
         _mapAxes          = document.getElementById('devices-map-axes');
+        _mapEmbryos       = document.getElementById('devices-map-embryos');
         _mapMarker        = document.getElementById('devices-map-marker');
         _mapMarkerPulse   = document.getElementById('devices-map-marker-pulse');
         _mapMarkerRing    = document.getElementById('devices-map-marker-ring');
@@ -243,6 +250,30 @@ const DevicesManager = (function () {
         }
     }
 
+    // Initial embryo snapshot — closes the gap for clients that connect
+    // mid-session, after the last EMBRYOS_UPDATE has already been broadcast
+    // and aged out of history. Subsequent updates arrive over the event bus.
+    async function loadEmbryosSnapshot() {
+        try {
+            const res = await fetch('/api/embryos/current');
+            if (!res.ok) return;
+            const data = await res.json();
+            handleEmbryosUpdate(data);
+        } catch (err) {
+            console.debug('embryos snapshot fetch failed:', err);
+        }
+    }
+
+    function handleEmbryosUpdate(payload) {
+        _embryos = (payload && Array.isArray(payload.embryos)) ? payload.embryos : [];
+        if (!_viewBox) {
+            computeViewBox();
+            renderMap();
+        } else {
+            renderEmbryos();
+        }
+    }
+
     // =====================================================================
     // Properties table (Details view)
     // =====================================================================
@@ -364,6 +395,7 @@ const DevicesManager = (function () {
         renderZoneLabels();
         renderOrigin();
         renderAxes();
+        renderEmbryos();
         updateMapMarker();
         updateScalebar();
     }
@@ -608,6 +640,67 @@ const DevicesManager = (function () {
         return Math.round(v).toString();
     }
 
+    // =====================================================================
+    // Embryo waypoints
+    // =====================================================================
+
+    // "embryo_007" / "embryo_7" -> 7. Falls back to a 1-based index from the
+    // caller so the label always shows *something*, even for stray ids.
+    function embryoLabelText(id, fallbackIndex) {
+        const m = id && String(id).match(/(\d+)/);
+        if (m) {
+            const n = parseInt(m[1], 10);
+            if (Number.isFinite(n)) return String(n);
+        }
+        return String(fallbackIndex + 1);
+    }
+
+    // Resolve XY for rendering — fine if SPIM-aligned, else coarse. Returns
+    // null when neither stage carries usable values so the entry is skipped
+    // (e.g. an embryo whose detection record came in malformed).
+    function embryoResolvedXY(emb) {
+        const f = emb && emb.position_fine;
+        if (f && Number.isFinite(f.x) && Number.isFinite(f.y)) return { x: f.x, y: f.y };
+        const c = emb && emb.position_coarse;
+        if (c && Number.isFinite(c.x) && Number.isFinite(c.y)) return { x: c.x, y: c.y };
+        return null;
+    }
+
+    function renderEmbryos() {
+        if (!_mapEmbryos || !_viewBox) return;
+        _mapEmbryos.innerHTML = '';
+        if (!_embryos || !_embryos.length) return;
+        const span = Math.max(_viewBox.xMax - _viewBox.xMin,
+                              _viewBox.yMax - _viewBox.yMin);
+        const radius = span * 0.012;
+        const fontSize = span * 0.015;
+
+        _embryos.forEach((emb, i) => {
+            const xy = embryoResolvedXY(emb);
+            if (!xy) return;
+
+            const isFine = !!emb.has_fine_position;
+            const circle = document.createElementNS(SVG_NS, 'circle');
+            circle.setAttribute('cx', xy.x);
+            circle.setAttribute('cy', svgY(xy.y));
+            circle.setAttribute('r', radius);
+            circle.setAttribute('class',
+                isFine ? 'devices-embryo-disc' : 'devices-embryo-ring');
+            // Identifiers for inspection / future click handlers — not used yet.
+            circle.setAttribute('data-embryo-id', emb.id || '');
+            circle.setAttribute('data-embryo-stage', isFine ? 'fine' : 'coarse');
+            _mapEmbryos.appendChild(circle);
+
+            const label = document.createElementNS(SVG_NS, 'text');
+            label.setAttribute('x', xy.x);
+            label.setAttribute('y', svgY(xy.y));
+            label.setAttribute('class', 'devices-embryo-label');
+            label.setAttribute('font-size', fontSize);
+            label.textContent = embryoLabelText(emb.id, i);
+            _mapEmbryos.appendChild(label);
+        });
+    }
+
     function updateMapMarker() {
         if (!_mapMarker || !_lastXY) return;
         const sx = _lastXY.X;
@@ -814,9 +907,11 @@ const DevicesManager = (function () {
         setupViewSwitcher();
         setupCameraWiring();
         loadCoverslip();
+        loadEmbryosSnapshot();
         switchView(_currentView);
         if (typeof ClientEventBus !== 'undefined') {
             ClientEventBus.on('DEVICE_STATE_UPDATE', handlePayload);
+            ClientEventBus.on('EMBRYOS_UPDATE', handleEmbryosUpdate);
         }
         setStatus('stale', 'waiting', 'no payload yet');
         syncInitialCameraState();
