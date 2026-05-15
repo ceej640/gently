@@ -352,6 +352,7 @@ class VisualizationServer(Service):
         image: np.ndarray,
         initial_stage_position: tuple = (0.0, 0.0),
         pixel_size_um: float = 0.65,
+        initial_markers: Optional[List[Dict]] = None,
     ) -> str:
         """
         Start an embryo marking session in the web UI.
@@ -367,6 +368,11 @@ class VisualizationServer(Service):
             Initial XY stage position in micrometers
         pixel_size_um : float
             Pixel size in micrometers/pixel
+        initial_markers : list of dict, optional
+            Pre-populated markers (e.g. from SAM detection). Each dict
+            uses image pixel coordinates: {"pixelX": float, "pixelY": float}.
+            The client treats them as the starting state and lets the
+            operator add, move, or remove markers from there.
 
         Returns
         -------
@@ -378,9 +384,25 @@ class VisualizationServer(Service):
         if not hasattr(self, '_marking_sessions'):
             self._marking_sessions = {}
 
+        # Normalise initial markers into the client's shape and seed the
+        # server-side list so the first 'marking_complete' carries them even
+        # if the operator never touches the canvas.
+        seeded_markers: List[Dict] = []
+        for i, m in enumerate(initial_markers or []):
+            px = m.get('pixelX', m.get('pixel_x'))
+            py = m.get('pixelY', m.get('pixel_y'))
+            if px is None or py is None:
+                continue
+            seeded_markers.append({
+                'number': i + 1,
+                'pixelX': float(px),
+                'pixelY': float(py),
+                'timestamp': '',
+            })
+
         session_id = str(uuid.uuid4())[:8]
         self._marking_sessions[session_id] = {
-            "markers": [],
+            "markers": list(seeded_markers),
             "complete": asyncio.Event(),
             "initial_stage_position": initial_stage_position,
             "pixel_size_um": pixel_size_um,
@@ -407,10 +429,13 @@ class VisualizationServer(Service):
                 "image_b64": b64,
                 "width": w,
                 "height": h,
+                "initial_markers": seeded_markers,
             }
         })
 
-        logger.info(f"Marking session {session_id} started, image {w}x{h} sent to {len(self.manager.active_connections)} clients")
+        logger.info(f"Marking session {session_id} started, image {w}x{h} "
+                    f"sent to {len(self.manager.active_connections)} clients "
+                    f"(seeded {len(seeded_markers)} marker(s))")
         return session_id
 
     async def wait_for_marking(self, session_id: str, timeout: float = None) -> list:
@@ -444,15 +469,36 @@ class VisualizationServer(Service):
         h, w = session["image_shape"][:2]
         center_x, center_y = w / 2, h / 2
 
-        # Convert to embryo entries compatible with EmbryoMarker format
+        # Convert pixel positions to stage coordinates so downstream callers
+        # (detect_embryos tool, plans, etc.) can drop these directly into
+        # agent.experiment.add_embryo without a second conversion. Both the
+        # legacy fields (pixel_position, initial_stage_position) and the SAM-
+        # compatible fields (stage_x_um, stage_y_um, pixel_x, pixel_y) are
+        # populated so existing consumers keep working.
+        from gently.core.coordinates import pixel_to_stage_position
+
         embryos = []
         for m in markers:
             px, py = m["pixelX"], m["pixelY"]
+            try:
+                stage_x_um, stage_y_um = pixel_to_stage_position(
+                    pixel_x=px, pixel_y=py,
+                    image_center_x=center_x, image_center_y=center_y,
+                    stage_x=initial_pos[0], stage_y=initial_pos[1],
+                    um_per_pixel=pixel_size,
+                )
+            except Exception:
+                stage_x_um, stage_y_um = initial_pos[0], initial_pos[1]
             embryos.append({
                 "embryo_number": m["number"],
                 "embryo_id": f"embryo_{m['number']:03d}",
+                "pixel_x": px,
+                "pixel_y": py,
                 "pixel_position": (px, py),
+                "stage_x_um": stage_x_um,
+                "stage_y_um": stage_y_um,
                 "initial_stage_position": initial_pos,
+                "confidence": 1.0,  # operator-confirmed
                 "marking_timestamp": m.get("timestamp", datetime.now().isoformat()),
             })
 

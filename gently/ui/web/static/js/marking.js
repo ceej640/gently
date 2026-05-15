@@ -57,7 +57,16 @@ const MarkingManager = {
         this.sessionId = data.session_id;
         this.imageWidth = data.width;
         this.imageHeight = data.height;
-        this.markers = [];
+        // Server can pre-populate markers from SAM detection. Numbers are
+        // already assigned and contiguous from the server side; we leave
+        // them as-is so the user can correlate with the log.
+        const seeded = Array.isArray(data.initial_markers) ? data.initial_markers : [];
+        this.markers = seeded.map(m => ({
+            number: m.number,
+            pixelX: m.pixelX,
+            pixelY: m.pixelY,
+            timestamp: m.timestamp || '',
+        }));
         this.active = true;
 
         // Display the image
@@ -68,10 +77,15 @@ const MarkingManager = {
         document.getElementById('marking-placeholder').style.display = 'none';
         document.getElementById('marking-active').style.display = 'flex';
 
-        // Update instructions
-        document.getElementById('marking-instructions').textContent =
-            'Click on each embryo center. Press Done when finished.';
+        // Update instructions — phrasing depends on whether SAM seeded markers
+        const instructions = document.getElementById('marking-instructions');
+        if (instructions) {
+            instructions.textContent = seeded.length
+                ? `${seeded.length} detected. Adjust as needed, then press Done.`
+                : 'Click on each embryo center. Press Done when finished.';
+        }
 
+        this._redraw();
         this._renderList();
     },
 

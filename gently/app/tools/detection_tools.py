@@ -24,8 +24,10 @@ from gently.core.coordinates import (
     description="""Automatically detect embryos in the current field of view using brightness detection and SAM segmentation.
 Use when user says "find embryos", "detect embryos", or at the start of an experiment to locate samples.
 Captures a bottom camera image and identifies bright spots as potential embryos.
-Opens napari after detection for immediate editing - add, delete, or move embryos as needed.
-Close napari when done to confirm the embryo list. Detected embryos are added to the experiment.""",
+When open_editor=True (default), the bottom-camera image plus SAM-detected positions
+appear on the web Marking canvas so the operator can add, move, or remove markers
+before pressing Done. Confirmed embryos are added to the experiment and appear on
+the Devices > Map view as coarse waypoints.""",
     category=ToolCategory.DETECTION,
     requires_microscope=True,
     examples=[
@@ -42,6 +44,7 @@ async def detect_embryos(
     min_area: int = 5000,
     max_area: int = 150000,
     open_editor: bool = True,
+    editor_timeout_sec: float = 600.0,
     context: Dict = None
 ) -> str:
     """Detect embryos automatically"""
@@ -58,6 +61,10 @@ async def detect_embryos(
         return "Error: SAM server not connected. Embryo detection requires the SAM segmentation server."
 
     try:
+        # Run SAM detection only — napari editor is intentionally bypassed.
+        # When open_editor=True we hand off to the web Marking canvas via
+        # viz_server below; SAM positions are pre-populated so the operator
+        # adjusts rather than redoes detection.
         result = await client.detect_embryos(
             min_confidence=min_confidence,
             use_claude_review=use_claude_review,
@@ -65,37 +72,91 @@ async def detect_embryos(
             brightness_percentile=brightness_percentile,
             min_area=min_area,
             max_area=max_area,
-            open_editor=open_editor
+            open_editor=False,
         )
 
-        if result.get('success'):
-            embryos = result.get('embryos', [])
-
-            # Add to experiment
-            for emb in embryos:
-                position = {
-                    'x': emb.get('stage_x_um', emb.get('stage_x', 0)),
-                    'y': emb.get('stage_y_um', emb.get('stage_y', 0))
-                }
-                agent.experiment.add_embryo(
-                    embryo_id=emb['embryo_id'],
-                    position=position,
-                    confidence=emb.get('confidence', 0.0),
-                    uid=emb.get('uid'),  # Preserve UID from detection
-                )
-
-            if auto_calibrate and embryos:
-                return f"Detected {len(embryos)} embryos. Starting calibration..."
-            else:
-                if open_editor:
-                    return f"Detection complete: {len(embryos)} embryos confirmed after editing."
-                else:
-                    return f"Detected {len(embryos)} embryos. Use show_detected_embryos to visualize or edit_embryos to modify."
-        else:
+        if not result.get('success'):
             return f"Detection failed: {result.get('error', 'Unknown error')}"
+
+        embryos = result.get('embryos', [])
+        editor_note = ""
+
+        viz_server = getattr(agent, 'viz_server', None)
+        if open_editor and embryos and viz_server is not None:
+            edited, editor_note = await _run_web_editor(
+                client=client,
+                viz_server=viz_server,
+                detection_result=result,
+                embryos=embryos,
+                exposure_ms=exposure_ms,
+                timeout_sec=editor_timeout_sec,
+            )
+            if edited is not None:
+                embryos = edited
+        elif open_editor and viz_server is None:
+            editor_note = " (web editor unavailable — viz server not running)"
+
+        # Add to experiment (Phase 1 schema: position is treated as coarse)
+        for emb in embryos:
+            position = {
+                'x': emb.get('stage_x_um', emb.get('stage_x', 0)),
+                'y': emb.get('stage_y_um', emb.get('stage_y', 0))
+            }
+            agent.experiment.add_embryo(
+                embryo_id=emb['embryo_id'],
+                position=position,
+                confidence=emb.get('confidence', 0.0),
+                uid=emb.get('uid'),  # Preserve UID from detection
+            )
+
+        if auto_calibrate and embryos:
+            return f"Detected {len(embryos)} embryos{editor_note}. Starting calibration..."
+        if open_editor:
+            return f"Detection complete: {len(embryos)} embryos confirmed via web editor{editor_note}."
+        return (f"Detected {len(embryos)} embryos. Use show_detected_embryos "
+                f"to visualize or edit_embryos to modify.")
 
     except Exception as e:
         return f"Error detecting embryos: {str(e)}"
+
+
+async def _run_web_editor(client, viz_server, detection_result, embryos,
+                          exposure_ms, timeout_sec):
+    """Run the web Marking canvas editor for a SAM detection result.
+
+    Returns (edited_embryos_or_None, note_string). On failure or timeout
+    falls back to the original SAM list so detection never blocks on a
+    closed browser tab.
+    """
+    image = await client._get_detection_image(detection_result, exposure_ms)
+    if image is None:
+        return None, " (editor skipped — no image available)"
+
+    # SAM dicts carry pixel_x / pixel_y; the canvas uses pixelX / pixelY.
+    initial_markers = []
+    for e in embryos:
+        px, py = e.get('pixel_x'), e.get('pixel_y')
+        if px is None or py is None:
+            continue
+        initial_markers.append({'pixelX': float(px), 'pixelY': float(py)})
+
+    stage_pos = tuple(detection_result.get('stage_position', (0.0, 0.0)))
+    um_per_pixel = get_um_per_pixel(DEFAULT_PIXEL_SIZE_UM, DEFAULT_OBJECTIVE_MAG)
+
+    session_id = await viz_server.start_marking_session(
+        image=image,
+        initial_stage_position=stage_pos,
+        pixel_size_um=um_per_pixel,
+        initial_markers=initial_markers,
+    )
+    edited = await viz_server.wait_for_marking(session_id, timeout=timeout_sec)
+
+    if not edited:
+        return None, " (editor returned no markers — keeping SAM result)"
+    # wait_for_marking already converted pixels -> stage coords and assigned
+    # sequential embryo_ids; the rest of the detect_embryos path only needs
+    # stage_x_um / stage_y_um / confidence / embryo_id which are present.
+    return edited, ""
 
 
 @tool(
