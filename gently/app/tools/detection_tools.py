@@ -184,11 +184,139 @@ async def _run_web_editor(client, viz_server, detection_result, embryos,
     return edited, ""
 
 
+# ============================================================================
+# Shared helpers for the web marking-canvas flow.
+# Used by manual_mark_embryos and edit_embryos (and could absorb the duplicate
+# detect_embryos logic later — keeping that path separate for now because it
+# layers SAM detection on top).
+# ============================================================================
+
+async def _capture_for_marking(agent, client, exposure_ms):
+    """Capture a fresh bottom-camera image and archive it.
+
+    Returns (image_ndarray, stage_pos_tuple) or (None, None) on failure.
+    """
+    try:
+        snap = await client.capture_bottom_image(exposure_ms=exposure_ms)
+    except Exception:
+        return None, None
+    image = snap.get('image') if isinstance(snap, dict) else None
+    if image is None:
+        return None, None
+    try:
+        stage_pos = await client.get_stage_position()
+    except Exception:
+        stage_pos = (0.0, 0.0)
+    # Best-effort archive — failure here mustn't block marking.
+    try:
+        if snap.get('image_path') and agent.store and agent.session_id:
+            from gently.harness.tools.helpers import build_snapshot_metadata
+            meta = build_snapshot_metadata(stage_pos, image.shape, agent.experiment)
+            agent.store.register_snapshot(
+                agent.session_id, "bottom_camera", snap['image_path'],
+                metadata=meta,
+            )
+    except Exception:
+        pass
+    return image, tuple(stage_pos)
+
+
+def _embryos_to_pixel_markers(embryo_items, image, stage_pos):
+    """Convert existing embryo stage positions to pixel markers for the canvas.
+
+    Markers within the image bounds become seed entries; anything off-image
+    (because the stage moved since the embryo was sighted) is skipped — the
+    operator can't see it so we shouldn't pretend otherwise.
+    """
+    if image is None:
+        return []
+    h, w = image.shape[:2]
+    cx, cy = w / 2, h / 2
+    um_per_pixel = get_um_per_pixel(DEFAULT_PIXEL_SIZE_UM, DEFAULT_OBJECTIVE_MAG)
+    sx0, sy0 = stage_pos
+    out = []
+    for _, st in embryo_items:
+        pos = getattr(st, 'stage_position', None) or {}
+        sx, sy = pos.get('x'), pos.get('y')
+        if sx is None or sy is None:
+            continue
+        # Inverse of pixel_to_stage_position: pixel = center + (stage - origin) / um_per_pixel.
+        # Note Y sign convention: pixel_to_stage flips Y, so the inverse flips it back.
+        px = cx + (sx - sx0) / um_per_pixel
+        py = cy - (sy - sy0) / um_per_pixel
+        if not (0 <= px <= w and 0 <= py <= h):
+            continue
+        out.append({'pixelX': float(px), 'pixelY': float(py)})
+    return out
+
+
+async def _run_marking_canvas(viz_server, image, stage_pos, initial_markers,
+                              *, timeout_sec):
+    """Open the web Marking canvas and await the operator's Done press.
+
+    Returns (markers_or_None, note_string). ``markers`` is the list as
+    returned by ``wait_for_marking`` — each entry carries stage_x_um /
+    stage_y_um already computed.
+    """
+    um_per_pixel = get_um_per_pixel(DEFAULT_PIXEL_SIZE_UM, DEFAULT_OBJECTIVE_MAG)
+    session_id = await viz_server.start_marking_session(
+        image=image,
+        initial_stage_position=stage_pos,
+        pixel_size_um=um_per_pixel,
+        initial_markers=initial_markers,
+    )
+    marked = await viz_server.wait_for_marking(session_id, timeout=timeout_sec)
+    if marked is None:
+        # wait_for_marking returns [] on timeout; None reserved for hard errors.
+        return None, " (no response from canvas)"
+    if not marked:
+        return [], ""
+    return marked, ""
+
+
+def _next_embryo_number(existing_ids):
+    """Find the next available 'embryo_N' suffix that doesn't collide."""
+    max_num = 0
+    for eid in existing_ids:
+        if not eid.startswith('embryo_'):
+            continue
+        try:
+            n = int(eid.replace('embryo_', ''))
+        except ValueError:
+            continue
+        max_num = max(max_num, n)
+    return max_num + 1
+
+
+def _publish_operator_marked(agent, *, embryo_ids, count,
+                              stage_origin, pre_edit_count, source):
+    """Emit OPERATOR_MARKED_EMBRYOS so candidate orchestrators / Map see the
+    fact that the operator just did this. Best-effort; never raises.
+    """
+    bus = getattr(agent, '_event_bus', None)
+    if bus is None:
+        return
+    try:
+        from gently.core.event_bus import EventType
+        bus.publish(
+            event_type=EventType.OPERATOR_MARKED_EMBRYOS,
+            data={
+                'embryo_ids': list(embryo_ids),
+                'count': count,
+                'stage_origin': list(stage_origin),
+                'pre_edit_count': pre_edit_count,
+            },
+            source=source,
+        )
+    except Exception:
+        pass
+
+
 @tool(
     name="manual_mark_embryos",
-    description="""Open an interactive window to manually mark embryos by clicking on them. Existing embryos are shown in green for reference.
+    description="""Open the web Marking canvas to manually mark embryos by clicking on them. Existing embryos are pre-placed as reference markers.
 Use when automatic detection missed embryos, or user wants to add embryos manually (e.g., "let me mark embryos", "I'll click on them").
-Opens a matplotlib window - user clicks to mark positions, then closes the window. New embryos get unique IDs automatically.""",
+The web canvas shows the current bottom-camera image with existing embryos numbered 1..N as reference; the operator adds new markers by clicking, then presses Done. Only the newly-added markers become new embryos with fresh unique IDs; existing embryos are untouched regardless of whether the operator left them in place or removed them in the canvas.""",
     category=ToolCategory.DETECTION,
     requires_microscope=True,
     examples=[
@@ -198,91 +326,74 @@ Opens a matplotlib window - user clicks to mark positions, then closes the windo
 )
 async def manual_mark_embryos(
     exposure_ms: float = None,
+    editor_timeout_sec: float = 600.0,
     context: Dict = None
 ) -> str:
-    """Manual embryo marking - shows existing embryos, adds new ones with unique IDs"""
+    """Manual embryo marking via the web Marking canvas — additive only."""
     agent = context.get('agent')
     client = context.get('client')
 
     if not agent:
         return "Error: No agent context"
-
     if not client:
         return "Error: Microscope not connected. Cannot mark embryos in offline mode."
 
-    try:
-        # Build list of existing embryos with their stage positions
-        existing_embryos = []
-        for embryo_id, embryo_state in agent.experiment.embryos.items():
-            pos = embryo_state.stage_position or {}
-            existing_embryos.append({
-                'embryo_id': embryo_id,
-                'stage_x': pos.get('x', 0),
-                'stage_y': pos.get('y', 0),
-            })
+    viz_server = getattr(agent, 'viz_server', None)
+    if viz_server is None:
+        return "Error: Web visualization server not running. Marking requires the web UI."
 
-        result = await client.manual_mark_embryos(
-            exposure_ms=exposure_ms,
-            existing_embryos=existing_embryos if existing_embryos else None
+    try:
+        snap, stage_pos = await _capture_for_marking(agent, client, exposure_ms)
+        if snap is None:
+            return "Failed to capture image for marking."
+
+        # Build initial markers from existing embryos so the operator has
+        # context. Seed count is recorded so the post-Done logic can
+        # treat anything beyond it as a new addition.
+        initial_markers = _embryos_to_pixel_markers(
+            agent.experiment.embryos.items(), snap, stage_pos,
+        )
+        seed_count = len(initial_markers)
+
+        marked, note = await _run_marking_canvas(
+            viz_server, snap, stage_pos, initial_markers,
+            timeout_sec=editor_timeout_sec,
+        )
+        if marked is None:
+            return f"Marking canceled or timed out{note}."
+
+        # ADD-ONLY semantic: keep existing embryos as-is. Anything beyond
+        # the seed count is a fresh sighting.
+        new_markers = marked[seed_count:]
+        if not new_markers:
+            return f"No new embryos marked{note}."
+
+        next_num = _next_embryo_number(agent.experiment.embryos.keys())
+        added_ids = []
+        for emb in new_markers:
+            new_id = f'embryo_{next_num}'
+            next_num += 1
+            agent.experiment.add_embryo(
+                embryo_id=new_id,
+                position={
+                    'x': emb.get('stage_x_um', 0.0),
+                    'y': emb.get('stage_y_um', 0.0),
+                },
+                confidence=emb.get('confidence', 1.0),
+                uid=str(uuid.uuid4()),
+            )
+            added_ids.append(new_id)
+
+        _publish_operator_marked(
+            agent,
+            embryo_ids=added_ids,
+            count=len(added_ids),
+            stage_origin=list(stage_pos),
+            pre_edit_count=seed_count,
+            source='manual_mark_embryos:web-editor',
         )
 
-        # Archive bottom camera image from marking with metadata
-        if result.get('image_path') and agent.store and agent.session_id:
-            try:
-                from gently.harness.tools.helpers import build_snapshot_metadata
-                stage_pos = result.get('stage_position', (0, 0))
-                img = result.get('image')
-                meta = build_snapshot_metadata(
-                    stage_pos, img.shape, agent.experiment,
-                ) if img is not None else None
-                agent.store.register_snapshot(
-                    agent.session_id, "bottom_camera", result['image_path'],
-                    metadata=meta)
-            except Exception:
-                pass
-
-        if result.get('success'):
-            embryos = result.get('embryos', [])
-
-            if not embryos:
-                return "No embryos marked. Close the window after clicking on embryo centers."
-
-            # Find next available embryo ID
-            existing_ids = set(agent.experiment.embryos.keys())
-            max_num = 0
-            for eid in existing_ids:
-                if eid.startswith('embryo_'):
-                    try:
-                        num = int(eid.replace('embryo_', ''))
-                        max_num = max(max_num, num)
-                    except ValueError:
-                        pass
-            next_num = max_num + 1
-
-            # Assign new unique IDs and add to experiment
-            added_ids = []
-            for emb in embryos:
-                new_id = f'embryo_{next_num}'
-                next_num += 1
-
-                position = {
-                    'x': emb.get('stage_x_um', emb.get('stage_x', 0)),
-                    'y': emb.get('stage_y_um', emb.get('stage_y', 0))
-                }
-
-                emb['embryo_id'] = new_id
-
-                agent.experiment.add_embryo(
-                    embryo_id=new_id,
-                    position=position,
-                    confidence=emb.get('confidence', 1.0),
-                    uid=str(uuid.uuid4()),  # Generate new UID for manually marked embryo
-                )
-                added_ids.append(new_id)
-
-            return f"Added {len(added_ids)} embryo(s): {', '.join(added_ids)}"
-        else:
-            return f"Marking failed: {result.get('error', 'Unknown error')}"
+        return f"Added {len(added_ids)} embryo(s): {', '.join(added_ids)}"
 
     except Exception as e:
         return f"Error: {str(e)}"
@@ -290,10 +401,10 @@ async def manual_mark_embryos(
 
 @tool(
     name="edit_embryos",
-    description="""Open an interactive napari editor to modify embryo positions.
+    description="""Open the web Marking canvas to modify embryo positions.
 Allows adding new embryos, removing existing ones, and moving embryos to correct positions.
 Use when user wants to adjust detection results (e.g., "edit embryos", "remove embryo_3", "adjust embryo positions", "fix detection").
-Opens napari with current embryos displayed - user can add/delete/move points, then close window to apply changes.""",
+The web canvas opens with the current bottom-camera image and existing embryos pre-placed; drag, add, or remove markers, then press Done. The experiment's embryo list is REPLACED with the marker set the operator confirms (positions go to coarse; any prior fine calibration is invalidated, matching the Map's edit semantics).""",
     category=ToolCategory.DETECTION,
     requires_microscope=True,
     examples=[
@@ -304,155 +415,87 @@ Opens napari with current embryos displayed - user can add/delete/move points, t
 )
 async def edit_embryos(
     exposure_ms: float = None,
+    editor_timeout_sec: float = 600.0,
     context: Dict = None
 ) -> str:
-    """Interactive embryo editor - add, remove, or move embryo positions in napari"""
+    """Interactive embryo editor via the web Marking canvas — replace-semantic."""
     agent = context.get('agent')
     client = context.get('client')
 
     if not agent:
         return "Error: No agent context"
-
     if not client:
         return "Error: Microscope not connected. Cannot edit embryos in offline mode."
-
     if not agent.experiment.embryos:
         return "No embryos to edit. Run detect_embryos or manual_mark_embryos first."
 
+    viz_server = getattr(agent, 'viz_server', None)
+    if viz_server is None:
+        return "Error: Web visualization server not running. Editing requires the web UI."
+
     try:
-        # Capture fresh image
-        snap = await client.capture_bottom_image(exposure_ms=exposure_ms)
-        image = snap['image']
-        if image is None:
+        snap, stage_pos = await _capture_for_marking(agent, client, exposure_ms)
+        if snap is None:
             return "Failed to capture image for editing."
 
-        # Get current stage position
-        stage_pos = await client.get_stage_position()
+        # Seed with every non-skipped existing embryo so the operator can
+        # drag / delete / supplement against the live image.
+        items = [(eid, st) for eid, st in agent.experiment.embryos.items()
+                 if not getattr(st, 'should_skip', False)]
+        initial_markers = _embryos_to_pixel_markers(items, snap, stage_pos)
+        if not initial_markers:
+            return "No editable embryos at this stage position (all are off-image or skipped)."
 
-        # Archive the bottom camera image with metadata
-        if snap.get('image_path') and agent.store and agent.session_id:
-            try:
-                from gently.harness.tools.helpers import build_snapshot_metadata
-                meta = build_snapshot_metadata(
-                    stage_pos, image.shape, agent.experiment)
-                agent.store.register_snapshot(
-                    agent.session_id, "bottom_camera", snap['image_path'],
-                    metadata=meta)
-            except Exception:
-                pass
+        marked, note = await _run_marking_canvas(
+            viz_server, snap, stage_pos, initial_markers,
+            timeout_sec=editor_timeout_sec,
+        )
+        if marked is None:
+            return f"Edit canceled or timed out{note}; experiment unchanged."
 
-        # Get current image dimensions for pixel coordinate calculation
-        image_center_x = image.shape[1] / 2
-        image_center_y = image.shape[0] / 2
+        # REPLACE semantic: clear existing embryos and rebuild from the
+        # operator's confirmed set. IDs are reassigned sequentially —
+        # matching the napari path's effective behaviour. Position-based
+        # ID preservation can come later if it's missed.
+        old_ids = set(agent.experiment.embryos.keys())
+        agent.experiment.embryos.clear()
 
-        # Build list of existing embryos with pixel positions
-        existing_embryos = []
-        um_per_pixel = get_um_per_pixel()  # Uses centralized defaults from coordinates.py
+        next_num = 1
+        new_ids = []
+        for emb in marked:
+            new_id = f'embryo_{next_num}'
+            next_num += 1
+            agent.experiment.add_embryo(
+                embryo_id=new_id,
+                position={
+                    'x': emb.get('stage_x_um', 0.0),
+                    'y': emb.get('stage_y_um', 0.0),
+                },
+                confidence=emb.get('confidence', 1.0),
+                uid=str(uuid.uuid4()),
+            )
+            new_ids.append(new_id)
 
-        for embryo_id, embryo_state in agent.experiment.embryos.items():
-            if embryo_state.should_skip:
-                continue  # Don't show skipped embryos
+        # Single consolidated broadcast so EMBRYOS_UPDATE arrives with the
+        # final set (the clear()/add_embryo() pair would otherwise fan out
+        # multiple intermediate updates).
+        agent.experiment.notify_embryos_changed()
 
-            pos = embryo_state.stage_position or {}
-            stage_x = pos.get('x', 0)
-            stage_y = pos.get('y', 0)
-
-            # Convert stage position to pixel position relative to current view
-            dx_um = stage_x - stage_pos[0]
-            dy_um = stage_y - stage_pos[1]
-            pixel_x = image_center_x + dx_um / um_per_pixel
-            pixel_y = image_center_y + dy_um / um_per_pixel
-
-            existing_embryos.append({
-                'embryo_id': embryo_id,
-                'pixel_x': pixel_x,
-                'pixel_y': pixel_y,
-                'stage_x_um': stage_x,
-                'stage_y_um': stage_y,
-            })
-
-        # Call the edit function on SAM server
-        result = await client.edit_embryos(
-            image=image,
-            embryos=existing_embryos,
-            stage_position=stage_pos,
-            pixel_size_um=DEFAULT_PIXEL_SIZE_UM,
-            objective_mag=DEFAULT_OBJECTIVE_MAG
+        _publish_operator_marked(
+            agent,
+            embryo_ids=new_ids,
+            count=len(new_ids),
+            stage_origin=list(stage_pos),
+            pre_edit_count=len(old_ids),
+            source='edit_embryos:web-editor',
         )
 
-        if result.get('success'):
-            edited_embryos = result.get('embryos', [])
-            original_count = result.get('original_count', 0)
-            added = result.get('added', 0)
-            removed = result.get('removed', 0)
-
-            # Clear existing embryos and rebuild from edit result
-            # Keep track of which were removed
-            old_ids = set(agent.experiment.embryos.keys())
-
-            # Find next available embryo ID for new ones
-            max_num = 0
-            for eid in old_ids:
-                if eid.startswith('embryo_'):
-                    try:
-                        num = int(eid.replace('embryo_', ''))
-                        max_num = max(max_num, num)
-                    except ValueError:
-                        pass
-            next_num = max_num + 1
-
-            # Process edited embryos
-            new_ids = set()
-            for emb in edited_embryos:
-                emb_id = emb.get('embryo_id', f'embryo_{next_num}')
-
-                # If it's a new embryo (source=manual_edit), assign new ID
-                if emb.get('source') == 'manual_edit' or emb_id not in old_ids:
-                    emb_id = f'embryo_{next_num}'
-                    next_num += 1
-
-                position = {
-                    'x': emb.get('stage_x_um', 0),
-                    'y': emb.get('stage_y_um', 0)
-                }
-
-                # Update or add embryo
-                if emb_id in agent.experiment.embryos:
-                    # Update existing — direct setter writes to coarse via the
-                    # stage_position property. Fire notify at the end of the
-                    # loop so we publish one consolidated EMBRYOS_UPDATE rather
-                    # than one per mutation.
-                    agent.experiment.embryos[emb_id].stage_position = position
-                else:
-                    # Add new
-                    agent.experiment.add_embryo(
-                        embryo_id=emb_id,
-                        position=position,
-                        confidence=emb.get('confidence', 1.0),
-                        uid=str(uuid.uuid4()),  # Generate new UID for embryo added via editor
-                    )
-
-                new_ids.add(emb_id)
-
-            # Remove embryos that were deleted in editor
-            removed_ids = old_ids - new_ids
-            for rid in removed_ids:
-                if rid in agent.experiment.embryos:
-                    del agent.experiment.embryos[rid]
-
-            # One consolidated broadcast for the whole editor session.
-            agent.experiment.notify_embryos_changed()
-
-            # Build summary
-            summary = f"Edit complete: {len(new_ids)} embryos"
-            if added > 0:
-                summary += f", +{added} added"
-            if len(removed_ids) > 0:
-                summary += f", -{len(removed_ids)} removed ({', '.join(removed_ids)})"
-
-            return summary
-        else:
-            return f"Edit failed: {result.get('error', 'Unknown error')}"
+        added = max(0, len(new_ids) - len(old_ids))
+        removed = max(0, len(old_ids) - len(new_ids))
+        summary = f"Edit complete: {len(new_ids)} embryos"
+        if added: summary += f", +{added}"
+        if removed: summary += f", -{removed}"
+        return summary
 
     except Exception as e:
         import traceback
